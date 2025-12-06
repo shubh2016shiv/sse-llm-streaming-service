@@ -14,11 +14,11 @@ Date: 2025-12-05
 import sys
 from pathlib import Path
 
+from infrastructure.manage import InfrastructureManager, ServiceState
+
 # Add src to Python path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root / "src"))
-
-from infrastructure.manage import InfrastructureManager, ServiceState
 
 
 def main():
@@ -66,7 +66,6 @@ def main():
     # Import and run uvicorn
     try:
         import uvicorn
-
         from config.settings import get_settings
 
         settings = get_settings()
