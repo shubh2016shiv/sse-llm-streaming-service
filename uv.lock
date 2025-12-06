@@ -9,6 +9,27 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aiolimiter"
+version = "1.2.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/23/b52debf471f7a1e42e362d959a3982bdcb4fe13a5d46e63d28868807a79c/aiolimiter-1.2.1.tar.gz", hash = "sha256:e02a37ea1a855d9e832252a105420ad4d15011505512a1a1d814647451b5cca9", size = 7185, upload-time = "2024-12-08T15:31:51.496Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/ba/df6e8e1045aebc4778d19b8a3a9bc1808adb1619ba94ca354d9ba17d86c3/aiolimiter-1.2.1-py3-none-any.whl", hash = "sha256:d3f249e9059a20badcb56b61601a83556133655c11d1eb3dd3e04ff069e5f3c7", size = 6711, upload-time = "2024-12-08T15:31:49.874Z" },
+]
+
+[[package]]
+name = "aioresilience"
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiolimiter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/29/5b376a5e527e06916072c9f41c4ade4d82481dfb7abfbc09b037e21eb7e7/aioresilience-0.2.1.tar.gz", hash = "sha256:fdf474d7168f6cf7a16308659cf27d1d2da8e56546331576132540d04416c437", size = 111629, upload-time = "2025-11-08T08:28:04.126Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/10/edec95e8ceccf935184bc1a4640812a2fa6284d505850eece2da7fbca81d/aioresilience-0.2.1-py3-none-any.whl", hash = "sha256:1c48da16ef2f6e5b143a9e20c69a2e2608064b5dace2707f98ad4ab0b73355de", size = 101892, upload-time = "2025-11-08T08:28:02.414Z" },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -496,7 +517,7 @@ name = "exceptiongroup"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz", hash = "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219", size = 30371, upload-time = "2025-11-21T23:01:54.787Z" }
 wheels = [
@@ -1771,14 +1792,14 @@ wheels = [
 
 [[package]]
 name = "pytest-asyncio"
-version = "0.23.0"
+version = "0.23.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pytest" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/db/f3/8fb382a48bded867e16e4f793ff69cd89a4e9c845c6173d28fcd34a9f12f/pytest-asyncio-0.23.0.tar.gz", hash = "sha256:236e89745b8be43b3b473640b523f26fe3c62a2afa7548e38532e9f201d22fc3", size = 43658, upload-time = "2023-12-03T09:45:55.729Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/ef/80107b9e939875ad613c705d99d91e4510dcf5fed29613ac9aecbcba0a8d/pytest-asyncio-0.23.6.tar.gz", hash = "sha256:ffe523a89c1c222598c76856e76852b787504ddb72dd5d9b6617ffa8aa2cde5f", size = 46203, upload-time = "2024-03-19T07:17:34.888Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/65/a4bf83365294e6aba4936aef0e6d7b87cfc5846d448392a980a862104179/pytest_asyncio-0.23.0-py3-none-any.whl", hash = "sha256:91ef405536331eb9971511aeb08225869985d800cf491015f7407044e7d1d7f8", size = 17040, upload-time = "2023-12-03T09:45:53.917Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/c9/de22c040d4c821c6c797ca1d720f1f4b2f4293d5757e811c62ae544496c4/pytest_asyncio-0.23.6-py3-none-any.whl", hash = "sha256:68516fdd1018ac57b846c9846b954f0393b26f094764a28c955eabb0536a4e8a", size = 17552, upload-time = "2024-03-19T07:17:32.951Z" },
 ]
 
 [[package]]
@@ -2109,6 +2130,7 @@ name = "sse"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "aioresilience" },
     { name = "fastapi" },
     { name = "google-generativeai" },
     { name = "hiredis" },
@@ -2139,6 +2161,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aioresilience" },
     { name = "fastapi", specifier = "==0.111.0" },
     { name = "google-generativeai", specifier = "==0.5.4" },
     { name = "hiredis", specifier = "==2.3.2" },
@@ -2151,7 +2174,7 @@ requires-dist = [
     { name = "pydantic", specifier = "==2.7.1" },
     { name = "pydantic-settings", specifier = "==2.3.0" },
     { name = "pytest", specifier = "==8.2.0" },
-    { name = "pytest-asyncio", specifier = "==0.23.0" },
+    { name = "pytest-asyncio", specifier = "==0.23.6" },
     { name = "pytest-cov", specifier = "==5.0.0" },
     { name = "python-dotenv", specifier = "==1.0.0" },
     { name = "redis", extras = ["hiredis"], specifier = "==5.0.4" },
