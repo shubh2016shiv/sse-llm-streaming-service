@@ -1,0 +1,177 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Redis Master - Primary cache and state storage
+  # ============================================================================
+  redis-master:
+    image: redis:7-alpine
+    container_name: sse-redis-master
+    command: >
+      redis-server --maxmemory 2gb --maxmemory-policy allkeys-lru --save 60 1000 --appendonly yes --appendfsync everysec
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - sse-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Redis Commander - Web UI for Redis management
+  # ============================================================================
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: sse-redis-commander
+    environment:
+      - REDIS_HOSTS=local:redis-master:6379
+    ports:
+      - "8081:8081"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - sse-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # SSE Streaming Application
+  # ============================================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sse-app
+    env_file:
+      - .env
+    environment:
+      # Redis Configuration
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+
+      # Application Configuration
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - DEBUG=false
+
+      # Circuit Breaker Configuration
+      - CB_FAILURE_THRESHOLD=5
+      - CB_RECOVERY_TIMEOUT=60
+
+      # Rate Limiting Configuration
+      - RATE_LIMIT_DEFAULT=100/minute
+      - RATE_LIMIT_PREMIUM=1000/minute
+
+      # Cache Configuration
+      - CACHE_RESPONSE_TTL=3600
+      - CACHE_SESSION_TTL=86400
+
+      # Queue Configuration
+      - QUEUE_TYPE=redis # or kafka
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source code for hot-reload in development
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - sse-network
+    restart: unless-stopped
+    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # ============================================================================
+  # Kafka - Message Queue (Alternative to Redis)
+  # ============================================================================
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: sse-zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - sse-network
+    restart: unless-stopped
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: sse-kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://0.0.0.0:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - sse-network
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # Kafka UI - Web interface for Kafka
+  # ============================================================================
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: sse-kafka-ui
+    ports:
+      - "8082:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - sse-network
+    restart: unless-stopped
+
+# ============================================================================
+# Volumes
+# ============================================================================
+volumes:
+  redis-data:
+    driver: local
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+  kafka-data:
+    driver: local
+
+# ============================================================================
+# Networks
+# ============================================================================
+networks:
+  sse-network:
+    driver: bridge
+    name: sse-network
