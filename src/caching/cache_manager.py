@@ -272,6 +272,10 @@ class CacheManager:
         - L2 hit: 1-5ms
         - Miss: returns None
         """
+        # Feature flag check
+        if not self.settings.ENABLE_CACHING:
+            return None
+
         # STAGE-2.1: Check L1 (in-memory) cache
         if thread_id:
             with self._tracker.track_stage("2.1", "L1 cache lookup", thread_id):
@@ -333,6 +337,10 @@ class CacheManager:
         - TTL ensures stale data eviction
         - Pipelining reduces Redis round-trips by 50-70%
         """
+        # Feature flag check
+        if not self.settings.ENABLE_CACHING:
+            return
+
         ttl = ttl or self.settings.cache.CACHE_RESPONSE_TTL
 
         # STAGE-2.3.1: Set in L1 cache

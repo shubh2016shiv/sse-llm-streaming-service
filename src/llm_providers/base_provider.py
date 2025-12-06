@@ -152,7 +152,7 @@ class BaseProvider(ABC):
             StreamChunk: Individual response chunks
 
         Raises:
-            ProviderException: On provider errors
+            ProviderError: On provider errors
             CircuitBreakerOpenError: If circuit is open
         """
         model = model or self.config.default_model

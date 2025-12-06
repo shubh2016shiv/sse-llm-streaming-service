@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.config.constants import HEADER_THREAD_ID
-from src.core.exceptions import SSEBaseException
+from src.core.exceptions import SSEBaseError
 from src.core.logging import get_logger
 from src.monitoring import get_metrics_collector
 from src.streaming import get_stream_lifecycle
@@ -87,7 +87,7 @@ async def create_stream(
             # Record success
             metrics.record_request("success", body.provider or "auto", body.model)
 
-        except SSEBaseException as e:
+        except SSEBaseError as e:
             # Send error event
             error_event = SSEEvent(
                 event="error",

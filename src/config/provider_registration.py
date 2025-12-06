@@ -62,3 +62,18 @@ def register_providers() -> None:
             )
         )
         logger.info("Registered Gemini provider")
+
+    # Register Fake Provider (Experiment Mode)
+    if settings.USE_FAKE_LLM:
+        from src.llm_providers.fake_provider import FakeProvider
+        factory.register(
+            name="fake",
+            provider_class=FakeProvider,
+            config=ProviderConfig(
+                name="fake",
+                api_key="fake-key",
+                base_url="fake-url",
+                default_model="fake-model"
+            )
+        )
+        logger.info("Registered Fake provider for experiments")

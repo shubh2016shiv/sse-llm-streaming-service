@@ -5,7 +5,7 @@ from typing import Any
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
 from src.config.settings import get_settings
-from src.core.exceptions import QueueException
+from src.core.exceptions import QueueError
 from src.core.interfaces import MessageQueue, QueueMessage
 from src.core.logging import get_logger
 
@@ -45,7 +45,7 @@ class KafkaQueue(MessageQueue):
             logger.info("Kafka Queue initialized", stage="QUEUE.INIT", topic=self.topic)
         except Exception as e:
             logger.error("Failed to initialize Kafka", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to initialize Kafka: {e}")
+            raise QueueError(f"Failed to initialize Kafka: {e}")
 
     async def produce(self, payload: dict[str, Any]) -> str:
         if not self._initialized:
@@ -64,7 +64,7 @@ class KafkaQueue(MessageQueue):
 
         except Exception as e:
             logger.error("Failed to produce to Kafka", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to produce to Kafka: {e}")
+            raise QueueError(f"Failed to produce to Kafka: {e}")
 
     async def consume(
         self,
@@ -95,22 +95,25 @@ class KafkaQueue(MessageQueue):
             messages = []
             for tp, records in results.items():
                 for record in records:
-                    messages.append(QueueMessage(
-                        id=f"{record.partition}-{record.offset}", # Not used for ack in Kafka same way
-                        payload=record.value,
-                        timestamp=record.value.get("timestamp", "")
-                    ))
+                    messages.append(
+                        QueueMessage(
+                            # Not used for ack in Kafka same way
+                            id=f"{record.partition}-{record.offset}",
+                            payload=record.value,
+                            timestamp=record.value.get("timestamp", "")
+                        )
+                    )
 
             return messages
 
         except Exception as e:
             logger.error("Failed to consume from Kafka", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to consume from Kafka: {e}")
+            raise QueueError(f"Failed to consume from Kafka: {e}")
 
     async def acknowledge(self, message_id: str) -> None:
         # In Kafka, we commit offsets.
-        # This simple interface assumes individual ack, which is tricky in Kafka (usually cumulative).
-        # For now, we will commit async.
+        # This simple interface assumes individual ack, which is tricky in Kafka
+        # (usually cumulative). For now, we will commit async.
         if self.consumer:
             await self.consumer.commit()
 

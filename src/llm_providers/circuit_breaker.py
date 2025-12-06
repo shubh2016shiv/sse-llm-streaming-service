@@ -400,7 +400,11 @@ class ResilientCall:
                 return await func(*args, **kwargs)
 
             if thread_id:
-                with self._tracker.track_stage("CB", f"Resilient call to {self.provider_name}", thread_id):
+                with self._tracker.track_stage(
+                    "CB",
+                    f"Resilient call to {self.provider_name}",
+                    thread_id,
+                ):
                     result = await execute()
             else:
                 result = await execute()

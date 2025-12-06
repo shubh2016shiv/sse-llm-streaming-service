@@ -26,7 +26,7 @@ from src.config.constants import (
 from src.config.settings import get_settings
 from src.core.exceptions import (
     AllProvidersDownError,
-    SSEBaseException,
+    SSEBaseError,
 )
 from src.core.execution_tracker import get_tracker
 from src.core.logging import clear_thread_id, get_logger, log_stage, set_thread_id
@@ -223,7 +223,7 @@ class StreamRequestLifecycle:
                 duration_ms=summary.get("total_duration_ms", 0)
             )
 
-        except SSEBaseException as e:
+        except SSEBaseError as e:
             logger.error(f"Stream failed: {e}", thread_id=thread_id)
             yield SSEEvent(
                 event=SSE_EVENT_ERROR,

@@ -31,16 +31,30 @@ class StreamRequest(BaseModel):
     Rationale: Enables fair resource allocation - premium users get higher priority,
     allowing better QoS for high-value customers while still serving regular users.
     """
-    query: str = Field(..., min_length=1, max_length=100000, description="User query")
+    query: str = Field(
+        ...,
+        min_length=1,
+        max_length=100000,
+        description="User query",
+    )
     model: str = Field(..., min_length=1, description="Model to use")
     provider: str | None = Field(default=None, description="Preferred provider")
-    thread_id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Thread ID for correlation")
-    user_id: str | None = Field(default=None, description="User identifier for rate limiting")
+    thread_id: str = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description="Thread ID for correlation",
+    )
+    user_id: str | None = Field(
+        default=None,
+        description="User identifier for rate limiting",
+    )
     priority: RequestPriority = Field(
         default=RequestPriority.NORMAL,
         description="Request priority (high/normal/low)"
     )
-    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional request metadata")
+    metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional request metadata",
+    )
 
     @classmethod
     def determine_priority(cls, is_premium_user: bool) -> RequestPriority:

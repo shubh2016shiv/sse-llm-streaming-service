@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⭐ Centralized Execution Time Tracking Module
+Centralized Execution Time Tracking Module
 
 This module provides centralized execution time tracking for all stages and
 sub-stages of request processing. It enables instant bottleneck identification
@@ -483,8 +483,16 @@ class ExecutionTracker:
             "execution_count": len(durations),
             "avg_duration_ms": round(statistics.mean(durations), 2),
             "p50_duration_ms": round(statistics.median(durations), 2),
-            "p95_duration_ms": round(sorted_durations[int(len(sorted_durations) * 0.95)], 2) if len(sorted_durations) > 1 else sorted_durations[0],
-            "p99_duration_ms": round(sorted_durations[int(len(sorted_durations) * 0.99)], 2) if len(sorted_durations) > 1 else sorted_durations[0],
+            "p95_duration_ms": (
+                round(sorted_durations[int(len(sorted_durations) * 0.95)], 2)
+                if len(sorted_durations) > 1
+                else sorted_durations[0]
+            ),
+            "p99_duration_ms": (
+                round(sorted_durations[int(len(sorted_durations) * 0.99)], 2)
+                if len(sorted_durations) > 1
+                else sorted_durations[0]
+            ),
             "min_duration_ms": round(min(durations), 2),
             "max_duration_ms": round(max(durations), 2),
             "success_rate": round(success_count / total_count, 3) if total_count > 0 else 0

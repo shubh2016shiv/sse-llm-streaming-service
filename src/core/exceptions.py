@@ -3,7 +3,7 @@
 Custom Exception Hierarchy for SSE Streaming Microservice
 
 This module defines a structured exception hierarchy for the entire application.
-All exceptions inherit from SSEBaseException for consistent error handling.
+All exceptions inherit from SSEBaseError for consistent error handling.
 
 Architectural Decision: Structured exception hierarchy
 - Easy to catch specific error types
@@ -17,7 +17,7 @@ Date: 2025-12-05
 from typing import Any
 
 
-class SSEBaseException(Exception):
+class SSEBaseError(Exception):
     """
     Base exception for all SSE streaming errors.
 
@@ -57,7 +57,7 @@ class SSEBaseException(Exception):
 # Configuration Exceptions
 # ============================================================================
 
-class ConfigurationError(SSEBaseException):
+class ConfigurationError(SSEBaseError):
     """Raised when configuration is invalid or missing."""
     pass
 
@@ -66,17 +66,17 @@ class ConfigurationError(SSEBaseException):
 # Cache Exceptions
 # ============================================================================
 
-class CacheException(SSEBaseException):
+class CacheError(SSEBaseError):
     """Base exception for cache-related errors."""
     pass
 
 
-class CacheConnectionError(CacheException):
+class CacheConnectionError(CacheError):
     """Raised when unable to connect to cache (Redis)."""
     pass
 
 
-class CacheKeyError(CacheException):
+class CacheKeyError(CacheError):
     """Raised when cache key operation fails."""
     pass
 
@@ -85,17 +85,17 @@ class CacheKeyError(CacheException):
 # Queue Exceptions
 # ============================================================================
 
-class QueueException(SSEBaseException):
+class QueueError(SSEBaseError):
     """Base exception for message queue errors."""
     pass
 
 
-class QueueFullError(QueueException):
+class QueueFullError(QueueError):
     """Raised when queue is full (backpressure)."""
     pass
 
 
-class QueueConsumerError(QueueException):
+class QueueConsumerError(QueueError):
     """Raised when queue consumer encounters an error."""
     pass
 
@@ -104,32 +104,32 @@ class QueueConsumerError(QueueException):
 # Provider Exceptions
 # ============================================================================
 
-class ProviderException(SSEBaseException):
+class ProviderError(SSEBaseError):
     """Base exception for LLM provider errors."""
     pass
 
 
-class ProviderNotAvailableError(ProviderException):
+class ProviderNotAvailableError(ProviderError):
     """Raised when LLM provider is not available."""
     pass
 
 
-class ProviderAuthenticationError(ProviderException):
+class ProviderAuthenticationError(ProviderError):
     """Raised when LLM provider authentication fails."""
     pass
 
 
-class ProviderTimeoutError(ProviderException):
+class ProviderTimeoutError(ProviderError):
     """Raised when LLM provider request times out."""
     pass
 
 
-class ProviderAPIError(ProviderException):
+class ProviderAPIError(ProviderError):
     """Raised when LLM provider API returns an error."""
     pass
 
 
-class AllProvidersDownError(ProviderException):
+class AllProvidersDownError(ProviderError):
     """Raised when all LLM providers are unavailable."""
     pass
 
@@ -138,7 +138,7 @@ class AllProvidersDownError(ProviderException):
 # Circuit Breaker Exceptions
 # ============================================================================
 
-class CircuitBreakerError(SSEBaseException):
+class CircuitBreakerError(SSEBaseError):
     """Base exception for circuit breaker errors."""
     pass
 
@@ -159,7 +159,7 @@ class CircuitBreakerOpenError(CircuitBreakerError):
 # Rate Limiting Exceptions
 # ============================================================================
 
-class RateLimitError(SSEBaseException):
+class RateLimitError(SSEBaseError):
     """Base exception for rate limiting errors."""
     pass
 
@@ -179,17 +179,17 @@ class RateLimitExceededError(RateLimitError):
 # Streaming Exceptions
 # ============================================================================
 
-class StreamingException(SSEBaseException):
+class StreamingError(SSEBaseError):
     """Base exception for streaming errors."""
     pass
 
 
-class StreamingTimeoutError(StreamingException):
+class StreamingTimeoutError(StreamingError):
     """Raised when streaming operation times out."""
     pass
 
 
-class ConnectionPoolExhaustedError(StreamingException):
+class ConnectionPoolExhaustedError(StreamingError):
     """Raised when connection pool is exhausted."""
     pass
 
@@ -198,7 +198,7 @@ class ConnectionPoolExhaustedError(StreamingException):
 # Validation Exceptions
 # ============================================================================
 
-class ValidationError(SSEBaseException):
+class ValidationError(SSEBaseError):
     """Raised when request validation fails."""
     pass
 
@@ -217,7 +217,7 @@ class InvalidInputError(ValidationError):
 # Execution Tracker Exceptions
 # ============================================================================
 
-class ExecutionTrackerError(SSEBaseException):
+class ExecutionTrackerError(SSEBaseError):
     """Base exception for execution tracker errors."""
     pass
 

@@ -137,7 +137,11 @@ class HealthChecker:
 
         # Check Redis
         try:
-            redis_health = await self._redis.health_check() if self._redis else {"status": "not_configured"}
+            redis_health = (
+                await self._redis.health_check()
+                if self._redis
+                else {"status": "not_configured"}
+            )
             report["components"]["redis"] = redis_health
             if redis_health.get("status") != "healthy":
                 issues.append("redis")
@@ -147,7 +151,11 @@ class HealthChecker:
 
         # Check Cache
         try:
-            cache_health = await self._cache.health_check() if self._cache else {"status": "not_configured"}
+            cache_health = (
+                await self._cache.health_check()
+                if self._cache
+                else {"status": "not_configured"}
+            )
             report["components"]["cache"] = cache_health
             if cache_health.get("status") != "healthy":
                 issues.append("cache")

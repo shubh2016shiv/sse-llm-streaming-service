@@ -106,7 +106,11 @@ class DeepSeekProvider(BaseProvider):
                     )
 
         except AuthenticationError as auth_error:
-            logger.error("DeepSeek authentication failed", stage="DEEPSEEK.ERR", error=str(auth_error))
+            logger.error(
+                "DeepSeek authentication failed",
+                stage="DEEPSEEK.ERR",
+                error=str(auth_error),
+            )
             raise ProviderAuthenticationError(
                 message="Invalid DeepSeek API key",
                 thread_id=thread_id,
@@ -114,7 +118,11 @@ class DeepSeekProvider(BaseProvider):
             ) from auth_error
 
         except RateLimitError as rate_error:
-            logger.warning("DeepSeek rate limit exceeded", stage="DEEPSEEK.ERR", error=str(rate_error))
+            logger.warning(
+                "DeepSeek rate limit exceeded",
+                stage="DEEPSEEK.ERR",
+                error=str(rate_error),
+            )
             raise RateLimitExceededError(
                 message="DeepSeek rate limit exceeded",
                 thread_id=thread_id,
@@ -122,7 +130,11 @@ class DeepSeekProvider(BaseProvider):
             ) from rate_error
 
         except APIConnectionError as conn_error:
-            logger.error("DeepSeek connection failed", stage="DEEPSEEK.ERR", error=str(conn_error))
+            logger.error(
+                "DeepSeek connection failed",
+                stage="DEEPSEEK.ERR",
+                error=str(conn_error),
+            )
             raise ProviderNotAvailableError(
                 message="Could not connect to DeepSeek",
                 thread_id=thread_id,
@@ -130,7 +142,11 @@ class DeepSeekProvider(BaseProvider):
             ) from conn_error
 
         except APIError as api_error:
-            logger.error("DeepSeek API error", stage="DEEPSEEK.ERR", error=str(api_error))
+            logger.error(
+                "DeepSeek API error",
+                stage="DEEPSEEK.ERR",
+                error=str(api_error),
+            )
             raise ProviderAPIError(
                 message=f"DeepSeek API error: {api_error.message}",
                 thread_id=thread_id,

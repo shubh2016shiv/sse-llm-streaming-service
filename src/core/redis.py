@@ -239,7 +239,10 @@ class RedisClient:
             )
             raise CacheConnectionError(
                 message=f"Failed to connect to Redis: {e}",
-                details={"host": self.settings.redis.REDIS_HOST, "port": self.settings.redis.REDIS_PORT}
+                details={
+                    "host": self.settings.redis.REDIS_HOST,
+                    "port": self.settings.redis.REDIS_PORT,
+                },
             )
 
     async def disconnect(self) -> None:
@@ -427,32 +430,67 @@ class RedisClient:
         try:
             return await self.client.hget(name, key)
         except RedisError as e:
-            logger.error("Redis HGET failed", stage="REDIS.HGET", name=name, key=key, error=str(e))
-            raise CacheKeyError(message=f"Redis HGET failed: {e}", details={"name": name, "key": key})
+            logger.error(
+                "Redis HGET failed",
+                stage="REDIS.HGET",
+                name=name,
+                key=key,
+                error=str(e),
+            )
+            raise CacheKeyError(
+                message=f"Redis HGET failed: {e}",
+                details={"name": name, "key": key},
+            )
 
     async def hset(self, name: str, key: str, value: str) -> int:
         """Set a hash field value."""
         try:
             return await self.client.hset(name, key, value)
         except RedisError as e:
-            logger.error("Redis HSET failed", stage="REDIS.HSET", name=name, key=key, error=str(e))
-            raise CacheKeyError(message=f"Redis HSET failed: {e}", details={"name": name, "key": key})
+            logger.error(
+                "Redis HSET failed",
+                stage="REDIS.HSET",
+                name=name,
+                key=key,
+                error=str(e),
+            )
+            raise CacheKeyError(
+                message=f"Redis HSET failed: {e}",
+                details={"name": name, "key": key},
+            )
 
     async def hgetall(self, name: str) -> dict[str, str]:
         """Get all hash fields."""
         try:
             return await self.client.hgetall(name)
         except RedisError as e:
-            logger.error("Redis HGETALL failed", stage="REDIS.HGETALL", name=name, error=str(e))
-            raise CacheKeyError(message=f"Redis HGETALL failed: {e}", details={"name": name})
+            logger.error(
+                "Redis HGETALL failed",
+                stage="REDIS.HGETALL",
+                name=name,
+                error=str(e),
+            )
+            raise CacheKeyError(
+                message=f"Redis HGETALL failed: {e}",
+                details={"name": name},
+            )
 
     async def hdel(self, name: str, *keys: str) -> int:
         """Delete hash fields."""
         try:
             return await self.client.hdel(name, *keys)
         except RedisError as e:
-            logger.error("Redis HDEL failed", stage="REDIS.HDEL", name=name, keys=keys, error=str(e))
-            raise CacheKeyError(message=f"Redis HDEL failed: {e}", details={"name": name, "keys": keys})
+            logger.error(
+                "Redis HDEL failed",
+                stage="REDIS.HDEL",
+                name=name,
+                keys=keys,
+                error=str(e),
+            )
+            raise CacheKeyError(
+                message=f"Redis HDEL failed: {e}",
+                details={"name": name, "keys": keys},
+            )
 
     # =========================================================================
     # Counter Operations (for rate limiting, metrics)

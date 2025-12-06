@@ -55,7 +55,11 @@ class OpenAIProvider(BaseProvider):
         # Initialize the official AsyncOpenAI client
         self.client = AsyncOpenAI(
             api_key=config.api_key,
-            base_url=config.base_url if config.base_url and config.base_url != "https://api.openai.com/v1" else None,
+            base_url=(
+                config.base_url
+                if config.base_url and config.base_url != "https://api.openai.com/v1"
+                else None
+            ),
             timeout=config.timeout,
             max_retries=0  # We handle retries in our resilience layer
         )

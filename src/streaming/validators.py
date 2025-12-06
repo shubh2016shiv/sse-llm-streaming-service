@@ -6,7 +6,7 @@ model specifications, and connection limits.
 """
 
 from src.config.constants import MAX_CONCURRENT_CONNECTIONS
-from src.core.exceptions import StreamingException, ValidationError
+from src.core.exceptions import StreamingError, ValidationError
 
 
 class RequestValidator:
@@ -28,7 +28,7 @@ class RequestValidator:
     def check_connection_limit(self, active_connections: int) -> None:
         """Verify connection limit is not exceeded."""
         if active_connections >= MAX_CONCURRENT_CONNECTIONS:
-            raise StreamingException(
+            raise StreamingError(
                 message=f"Connection limit reached ({MAX_CONCURRENT_CONNECTIONS})"
             )
 

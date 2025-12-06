@@ -44,10 +44,22 @@ class RedisSettings(BaseSettings):
 
     # Connection pool settings (optimized for scale)
     REDIS_MIN_CONNECTIONS: int = Field(default=10, description="Minimum idle connections")
-    REDIS_MAX_CONNECTIONS: int = Field(default=200, description="Maximum total connections (optimized for scale)")
-    REDIS_SOCKET_TIMEOUT: int = Field(default=5, description="Socket timeout in seconds")
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5, description="Connection timeout in seconds")
-    REDIS_HEALTH_CHECK_INTERVAL: int = Field(default=30, description="Health check interval in seconds")
+    REDIS_MAX_CONNECTIONS: int = Field(
+        default=200,
+        description="Maximum total connections (optimized for scale)",
+    )
+    REDIS_SOCKET_TIMEOUT: int = Field(
+        default=5,
+        description="Socket timeout in seconds",
+    )
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(
+        default=5,
+        description="Connection timeout in seconds",
+    )
+    REDIS_HEALTH_CHECK_INTERVAL: int = Field(
+        default=30,
+        description="Health check interval in seconds",
+    )
 
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=True)
 
@@ -69,14 +81,17 @@ class LLMProviderSettings(BaseSettings):
     # DeepSeek
     DEEPSEEK_API_KEY: str | None = Field(default=None, description="DeepSeek API key")
     DEEP_SEEK: str | None = Field(default=None, description="DeepSeek API key (alternative)")
-    DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1", description="DeepSeek base URL")
+    DEEPSEEK_BASE_URL: str = Field(
+        default="https://api.deepseek.com/v1",
+        description="DeepSeek base URL",
+    )
     DEEPSEEK_TIMEOUT: int = Field(default=30, description="DeepSeek request timeout")
 
     # Google Gemini
     GOOGLE_API_KEY: str | None = Field(default=None, description="Google Gemini API key")
     GEMINI_BASE_URL: str = Field(
         default="https://generativelanguage.googleapis.com",
-        description="Gemini base URL"
+        description="Gemini base URL",
     )
     GEMINI_TIMEOUT: int = Field(default=30, description="Gemini request timeout")
 
@@ -157,7 +172,10 @@ class ExecutionTrackingSettings(BaseSettings):
     """
 
     EXECUTION_TRACKING_ENABLED: bool = Field(default=True, description="Enable execution tracking")
-    EXECUTION_TRACKING_SAMPLE_RATE: float = Field(default=0.1, description="Sampling rate (0.0-1.0), 0.1 = 10%")
+    EXECUTION_TRACKING_SAMPLE_RATE: float = Field(
+        default=0.1,
+        description="Sampling rate (0.0-1.0), 0.1 = 10%",
+    )
 
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=True)
 
@@ -239,25 +257,46 @@ class Settings(BaseSettings):
     REDIS_DB: int = Field(default=0, description="Redis database number")
     REDIS_PASSWORD: str | None = Field(default=None, description="Redis password (if required)")
     REDIS_MIN_CONNECTIONS: int = Field(default=10, description="Minimum idle connections")
-    REDIS_MAX_CONNECTIONS: int = Field(default=200, description="Maximum total connections (optimized for scale)")
-    REDIS_SOCKET_TIMEOUT: int = Field(default=5, description="Socket timeout in seconds")
-    REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(default=5, description="Connection timeout in seconds")
-    REDIS_HEALTH_CHECK_INTERVAL: int = Field(default=30, description="Health check interval in seconds")
+    REDIS_MAX_CONNECTIONS: int = Field(
+        default=200,
+        description="Maximum total connections (optimized for scale)",
+    )
+    REDIS_SOCKET_TIMEOUT: int = Field(
+        default=5,
+        description="Socket timeout in seconds",
+    )
+    REDIS_SOCKET_CONNECT_TIMEOUT: int = Field(
+        default=5,
+        description="Connection timeout in seconds",
+    )
+    REDIS_HEALTH_CHECK_INTERVAL: int = Field(
+        default=30,
+        description="Health check interval in seconds",
+    )
 
     # LLM Provider settings
     OPENAI_API_KEY: str | None = Field(default=None, description="OpenAI API key")
-    OPENAI_BASE_URL: str = Field(default="https://api.openai.com/v1", description="OpenAI base URL")
+    OPENAI_BASE_URL: str = Field(
+        default="https://api.openai.com/v1",
+        description="OpenAI base URL",
+    )
     OPENAI_TIMEOUT: int = Field(default=30, description="OpenAI request timeout")
 
     DEEPSEEK_API_KEY: str | None = Field(default=None, description="DeepSeek API key")
-    DEEP_SEEK: str | None = Field(default=None, description="DeepSeek API key (alternative)")
-    DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1", description="DeepSeek base URL")
+    DEEP_SEEK: str | None = Field(
+        default=None,
+        description="DeepSeek API key (alternative)",
+    )
+    DEEPSEEK_BASE_URL: str = Field(
+        default="https://api.deepseek.com/v1",
+        description="DeepSeek base URL",
+    )
     DEEPSEEK_TIMEOUT: int = Field(default=30, description="DeepSeek request timeout")
 
     GOOGLE_API_KEY: str | None = Field(default=None, description="Google Gemini API key")
     GEMINI_BASE_URL: str = Field(
         default="https://generativelanguage.googleapis.com",
-        description="Gemini base URL"
+        description="Gemini base URL",
     )
     GEMINI_TIMEOUT: int = Field(default=30, description="Gemini request timeout")
 
@@ -279,11 +318,20 @@ class Settings(BaseSettings):
 
     # Execution Tracking settings
     EXECUTION_TRACKING_ENABLED: bool = Field(default=True, description="Enable execution tracking")
-    EXECUTION_TRACKING_SAMPLE_RATE: float = Field(default=0.1, description="Sampling rate (0.0-1.0), 0.1 = 10%")
+    EXECUTION_TRACKING_SAMPLE_RATE: float = Field(
+        default=0.1,
+        description="Sampling rate (0.0-1.0), 0.1 = 10%",
+    )
 
     # Rate Limiting Local Cache settings
-    RATE_LIMIT_LOCAL_CACHE_ENABLED: bool = Field(default=True, description="Enable local rate limit cache")
-    RATE_LIMIT_LOCAL_SYNC_INTERVAL: int = Field(default=1, description="Local cache sync interval (seconds)")
+    RATE_LIMIT_LOCAL_CACHE_ENABLED: bool = Field(
+        default=True,
+        description="Enable local rate limit cache",
+    )
+    RATE_LIMIT_LOCAL_SYNC_INTERVAL: int = Field(
+        default=1,
+        description="Local cache sync interval (seconds)",
+    )
 
     # Logging settings
     LOG_LEVEL: str = Field(default="INFO", description="Logging level")
@@ -301,6 +349,17 @@ class Settings(BaseSettings):
     API_HOST: str = Field(default="0.0.0.0", description="API host")
     API_PORT: int = Field(default=8000, description="API port")
     CORS_ORIGINS: list[str] = Field(default=["*"], description="Allowed CORS origins")
+
+    # EXPERIMENT SETTINGS
+    USE_FAKE_LLM: bool = Field(
+        default=True,
+        description="Use fake LLM provider for zero-cost testing",
+    )
+    ENABLE_CACHING: bool = Field(default=True, description="Enable L1/L2 caching")
+    QUEUE_TYPE: str = Field(
+        default="redis",
+        description="Message queue type (redis/kafka)",
+    )
 
     @model_validator(mode="after")
     def merge_deepseek_keys(self):

@@ -5,6 +5,7 @@ This module contains administrative and monitoring endpoints.
 """
 
 from fastapi import APIRouter, Response
+from pydantic import BaseModel
 
 from src.core.execution_tracker import get_tracker
 from src.llm_providers import get_circuit_breaker_manager
@@ -54,3 +55,52 @@ async def get_prometheus_metrics():
         content=metrics_collector.get_prometheus_metrics(),
         media_type=metrics_collector.get_content_type()
     )
+
+
+class UpdateConfigRequest(BaseModel):
+    USE_FAKE_LLM: bool | None = None
+    ENABLE_CACHING: bool | None = None
+    QUEUE_TYPE: str | None = None
+
+@router.post("/config")
+async def update_configuration(request: UpdateConfigRequest):
+    """
+    Update feature flags for experiments.
+    """
+    from src.config.settings import get_settings
+    settings = get_settings()
+
+    if request.USE_FAKE_LLM is not None:
+        settings.USE_FAKE_LLM = request.USE_FAKE_LLM
+        # Re-register providers if fake LLM changed
+        from src.config.provider_registration import register_providers
+        register_providers()
+
+    if request.ENABLE_CACHING is not None:
+        settings.ENABLE_CACHING = request.ENABLE_CACHING
+
+    if request.QUEUE_TYPE is not None:
+        settings.QUEUE_TYPE = request.QUEUE_TYPE
+
+    return {
+        "status": "updated",
+        "current_config": {
+            "USE_FAKE_LLM": settings.USE_FAKE_LLM,
+            "ENABLE_CACHING": settings.ENABLE_CACHING,
+            "QUEUE_TYPE": settings.QUEUE_TYPE
+        }
+    }
+
+@router.get("/config")
+async def get_configuration():
+    """
+    Get current feature flags.
+    """
+    from src.config.settings import get_settings
+    settings = get_settings()
+
+    return {
+        "USE_FAKE_LLM": settings.USE_FAKE_LLM,
+        "ENABLE_CACHING": settings.ENABLE_CACHING,
+        "QUEUE_TYPE": settings.QUEUE_TYPE
+    }

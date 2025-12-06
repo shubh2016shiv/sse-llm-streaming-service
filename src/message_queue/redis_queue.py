@@ -25,14 +25,12 @@ from typing import Any
 from redis.exceptions import RedisError
 
 from src.config.settings import get_settings
-from src.core.exceptions import QueueException
+from src.core.exceptions import QueueError
+from src.core.interfaces import MessageQueue, QueueMessage
 from src.core.logging import get_logger
 from src.core.redis import RedisClient, get_redis_client
 
 logger = get_logger(__name__)
-
-
-from src.core.interfaces import MessageQueue, QueueMessage
 
 
 class RedisQueue(MessageQueue):
@@ -97,7 +95,7 @@ class RedisQueue(MessageQueue):
                 pass
             else:
                 logger.error("Failed to create consumer group", stage="QUEUE.ERR", error=str(e))
-                raise QueueException(f"Failed to create consumer group: {e}")
+            raise QueueError(f"Failed to create consumer group: {e}")
 
         self._initialized = True
 
@@ -127,7 +125,7 @@ class RedisQueue(MessageQueue):
             # For complex objects, JSON dump them.
             message_data = {}
             for k, v in payload.items():
-                if isinstance(v, (dict, list, bool)):
+                if isinstance(v, dict | list | bool):
                     message_data[k] = json.dumps(v)
                 else:
                     message_data[k] = str(v)
@@ -144,7 +142,7 @@ class RedisQueue(MessageQueue):
 
         except RedisError as e:
             logger.error("Failed to produce message", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to produce message: {e}")
+            raise QueueError(f"Failed to produce message: {e}")
 
     async def consume(
         self,
@@ -208,7 +206,7 @@ class RedisQueue(MessageQueue):
 
         except RedisError as e:
             logger.error("Failed to consume messages", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to consume messages: {e}")
+            raise QueueError(f"Failed to consume messages: {e}")
 
     async def acknowledge(self, message_id: str) -> None:
         """
@@ -226,7 +224,7 @@ class RedisQueue(MessageQueue):
             await self._redis.client.xack(self.stream_name, self.group_name, message_id)
         except RedisError as e:
             logger.error("Failed to acknowledge message", stage="QUEUE.ERR", error=str(e))
-            raise QueueException(f"Failed to acknowledge message: {e}")
+            raise QueueError(f"Failed to acknowledge message: {e}")
 
     async def start_consumer_loop(
         self,

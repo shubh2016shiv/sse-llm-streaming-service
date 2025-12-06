@@ -21,7 +21,7 @@ from src.api import admin_router, health_router, streaming_router
 from src.caching import close_cache, get_cache_manager, init_cache
 from src.config.constants import HEADER_THREAD_ID
 from src.config.settings import get_settings
-from src.core.exceptions import RateLimitExceededError, SSEBaseException
+from src.core.exceptions import RateLimitExceededError, SSEBaseError
 from src.core.logging import clear_thread_id, get_logger, set_thread_id, setup_logging
 from src.core.redis import close_redis, get_redis_client, init_redis
 from src.llm_providers import get_circuit_breaker_manager
@@ -200,8 +200,8 @@ async def root():
 # Exception Handlers
 # ============================================================================
 
-@app.exception_handler(SSEBaseException)
-async def sse_exception_handler(request: Request, exc: SSEBaseException):
+@app.exception_handler(SSEBaseError)
+async def sse_exception_handler(request: Request, exc: SSEBaseError):
     """Handle SSE-specific exceptions."""
     logger.error(
         f"SSE exception: {exc.message}",
