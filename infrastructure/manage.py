@@ -134,10 +134,17 @@ class InfrastructureManager:
     """
 
     # Core infrastructure services (required)
-    CORE_SERVICES = ["redis-master", "zookeeper", "kafka"]
+    # These services form the essential infrastructure backbone:
+    # - redis-master: Cache and state storage
+    # - zookeeper: Kafka coordination
+    # - kafka: Message queue
+    # - nginx: Load balancer and reverse proxy
+    # - prometheus: Metrics collection and alerting
+    # - grafana: Metrics visualization and dashboards
+    CORE_SERVICES = ["redis-master", "zookeeper", "kafka", "nginx", "prometheus", "grafana"]
 
     # Optional application and UI services
-    OPTIONAL_SERVICES = ["redis-commander", "kafka-ui", "app"]
+    OPTIONAL_SERVICES = ["redis-commander", "kafka-ui", "redis-exporter", "app-1", "app-2", "app-3"]
 
     # All services
     ALL_SERVICES = CORE_SERVICES + OPTIONAL_SERVICES
@@ -147,9 +154,15 @@ class InfrastructureManager:
         "redis-master": "Redis Master",
         "zookeeper": "Zookeeper",
         "kafka": "Kafka Broker",
+        "nginx": "NGINX Load Balancer",
+        "prometheus": "Prometheus Monitoring",
+        "grafana": "Grafana Dashboards",
         "redis-commander": "Redis Commander",
         "kafka-ui": "Kafka UI",
-        "app": "SSE Application",
+        "redis-exporter": "Redis Exporter",
+        "app-1":  "SSE Application 1",
+        "app-2": "SSE Application 2",
+        "app-3": "SSE Application 3",
     }
 
     SERVICE_CONFIGS = [
@@ -224,16 +237,33 @@ class InfrastructureManager:
 
     def stop(self, services: list[str] | None = None) -> bool:
         """
-        Stop infrastructure services.
+        Stop infrastructure services gracefully.
+
+        BEHAVIOR:
+        ---------
+        - If services=None: Stops ALL services and removes containers (docker compose down)
+        - If services specified: Stops only those services, keeps containers (docker compose stop)
+
+        RATIONALE:
+        ----------
+        'docker compose down' removes containers, networks, and optionally volumes.
+        'docker compose stop' only stops running containers, preserving state.
 
         Args:
-            services: Specific services to stop (None for all)
+            services: List of specific service names to stop (None = stop all and clean up)
 
         Returns:
-            Success status
+            bool: True if stop command succeeded, False otherwise
+
+        Example:
+            manager.stop()                    # Stop everything, remove containers
+            manager.stop(['grafana', 'prometheus'])  # Stop specific services only
         """
         self.logger.info("Stopping infrastructure services...")
 
+        # COMMAND SELECTION:
+        # - 'down': Stops and removes containers/networks (full cleanup)
+        # - 'stop': Only stops containers (preserves state for quick restart)
         cmd = (
             ["docker", "compose", "down"]
             if not services
@@ -250,19 +280,47 @@ class InfrastructureManager:
         self.logger.info("Services stopped successfully")
         return True
 
-    def restart(self, services: list[str] | None = None) -> bool:
+    def restart(self, services: list[str] | None = None, include_optional: bool = False) -> bool:
         """
-        Restart infrastructure services.
+        Restart infrastructure services with health validation.
+
+        MECHANISM:
+        ----------
+        1. Issues 'docker compose restart' for target services
+        2. Waits HEALTH_CHECK_INITIAL_DELAY seconds for containers to initialize
+        3. Runs health validation checks with 60-second timeout
+        4. Returns success only if all services healthy
+
+        IMPORTANT:
+        ----------
+        Unlike stop(), restart() always validates health of core services.
+        This ensures restarted services are actually working, not just running.
 
         Args:
-            services: Specific services to restart (None for all)
+            services: Specific service names to restart (None = use default set)
+            include_optional: If True and services=None, restart all services (core + optional)
 
         Returns:
-            Success status
+            bool: True if restart succeeded AND services are healthy, False otherwise
+
+        Example:
+            manager.restart()                          # Restart core services
+            manager.restart(include_optional=True)     # Restart all services
+            manager.restart(['prometheus', 'grafana']) # Restart specific services
         """
         self.logger.info("Restarting infrastructure services...")
 
-        target_services = services or self.REQUIRED_SERVICES
+        # DETERMINE TARGET SERVICES:
+        # - Specific services provided: Use those
+        # - include_optional=True: Restart everything (core + UI + app)
+        # - Default: Restart only core infrastructure
+        if services:
+            target_services = services
+        elif include_optional:
+            target_services = self.ALL_SERVICES
+        else:
+            target_services = self.CORE_SERVICES
+
         cmd = ["docker", "compose", "restart"] + target_services
 
         success, output = self._run_command(cmd)
@@ -272,10 +330,14 @@ class InfrastructureManager:
             self.logger.debug(f"Error: {output}")
             return False
 
+        # HEALTH VALIDATION:
+        # Wait for containers to initialize before checking health
         self.logger.info("Services restarted, waiting for health checks...")
         time.sleep(self.HEALTH_CHECK_INITIAL_DELAY)
 
-        return self._wait_for_healthy(target_services, timeout=60)
+        #Only validate core services (optional services may not have health checks)
+        validation_services = [s for s in target_services if s in self.CORE_SERVICES]
+        return self._wait_for_healthy(validation_services, timeout=60)
 
     def status(self) -> dict[str, ServiceState]:
         """

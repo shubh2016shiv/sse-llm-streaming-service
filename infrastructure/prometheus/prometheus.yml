@@ -1,0 +1,563 @@
+# ============================================================================
+# Prometheus Configuration for SSE Streaming Application
+# ============================================================================
+#
+# WHAT IS PROMETHEUS?
+# -------------------
+# Prometheus is an open-source monitoring and alerting toolkit designed for
+# reliability and scalability. It collects metrics from configured targets
+# at given intervals, evaluates rule expressions, displays results, and can
+# trigger alerts.
+#
+# KEY CONCEPTS:
+# -------------
+# 1. SCRAPING: Prometheus pulls (scrapes) metrics from HTTP endpoints
+# 2. TIME-SERIES: Metrics are stored as time-series data
+# 3. LABELS: Metrics can have multiple dimensions (labels)
+# 4. PROMQL: Powerful query language for analyzing metrics
+# 5. ALERTING: Define rules to trigger alerts based on metrics
+#
+# ARCHITECTURE:
+# -------------
+#   Prometheus Server → Scrapes → App Instance 1 (/admin/metrics)
+#                    → Scrapes → App Instance 2 (/admin/metrics)
+#                    → Scrapes → App Instance 3 (/admin/metrics)
+#                    → Scrapes → NGINX (/nginx-status)
+#                    → Scrapes → Redis Exporter
+#
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# GLOBAL CONFIGURATION
+# ----------------------------------------------------------------------------
+# These settings apply to all scrape jobs unless overridden.
+
+global:
+  # SCRAPE INTERVAL
+  # ---------------
+  # How often Prometheus scrapes metrics from targets.
+  #
+  # WHY 15 SECONDS?
+  # ---------------
+  # - Industry standard for most applications
+  # - Good balance between data granularity and resource usage
+  # - Allows detecting issues within 15-30 seconds
+  # - Not too frequent to overwhelm targets
+  #
+  # WHEN TO ADJUST:
+  # ---------------
+  # - Increase to 30s or 60s: Low-traffic applications, reduce storage
+  # - Decrease to 5s or 10s: Critical systems, need faster detection
+  #
+  # STORAGE IMPACT:
+  # ---------------
+  # 15s interval = 4 samples/minute = 240 samples/hour = 5,760 samples/day
+  # 5s interval = 12 samples/minute = 720 samples/hour = 17,280 samples/day
+  # (3x more storage for 3x faster detection)
+  
+  scrape_interval: 15s
+  
+  # EVALUATION INTERVAL
+  # -------------------
+  # How often Prometheus evaluates alerting rules.
+  #
+  # WHY 15 SECONDS?
+  # ---------------
+  # - Matches scrape_interval for consistency
+  # - Alerts evaluated on fresh data
+  # - Fast enough for most alerting needs
+  #
+  # IMPORTANT: This doesn't affect when alerts fire, only when rules are evaluated.
+  # Alert rules can specify their own "for" duration.
+  
+  evaluation_interval: 15s
+  
+  # EXTERNAL LABELS
+  # ---------------
+  # Labels attached to all time series and alerts from this Prometheus instance.
+  #
+  # USE CASES:
+  # ----------
+  # 1. FEDERATION: Identify which Prometheus instance collected the metric
+  # 2. ALERTMANAGER: Route alerts based on environment/cluster
+  # 3. MULTI-CLUSTER: Distinguish metrics from different deployments
+  #
+  # EXAMPLE SCENARIO:
+  # -----------------
+  # Production cluster: environment=production, cluster=us-east-1
+  # Staging cluster: environment=staging, cluster=us-west-2
+  #
+  # When querying federated Prometheus, you can filter:
+  # metric_name{environment="production"}
+  
+  external_labels:
+    environment: 'development'  # Change to 'production', 'staging', etc.
+    cluster: 'local'            # Change to cluster identifier
+    service: 'sse-streaming'    # Service name for multi-service setups
+
+# ----------------------------------------------------------------------------
+# ALERTING CONFIGURATION
+# ----------------------------------------------------------------------------
+# Configures how Prometheus sends alerts to Alertmanager.
+#
+# WHAT IS ALERTMANAGER?
+# ---------------------
+# Alertmanager handles alerts sent by Prometheus. It:
+# - Deduplicates alerts
+# - Groups related alerts
+# - Routes alerts to receivers (email, Slack, PagerDuty, etc.)
+# - Silences alerts during maintenance
+# - Inhibits alerts (e.g., if server is down, don't alert on high latency)
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            # ALERTMANAGER ENDPOINT
+            # ---------------------
+            # Uncomment and configure when Alertmanager is deployed
+            # - alertmanager:9093
+            
+            # DOCKER COMPOSE SETUP:
+            # ---------------------
+            # If running Alertmanager in Docker Compose:
+            # - alertmanager:9093
+            #
+            # KUBERNETES SETUP:
+            # -----------------
+            # If running in Kubernetes:
+            # - alertmanager.monitoring.svc.cluster.local:9093
+            
+            # For now, no Alertmanager (alerts visible in Prometheus UI)
+            []
+
+# ----------------------------------------------------------------------------
+# RULE FILES
+# ----------------------------------------------------------------------------
+# Alert and recording rules are defined in separate YAML files.
+#
+# WHY SEPARATE FILES?
+# -------------------
+# - Better organization (group related rules)
+# - Easier to manage and version control
+# - Can reload rules without restarting Prometheus
+# - Share rules across multiple Prometheus instances
+
+rule_files:
+  # ALERT RULES
+  # -----------
+  # Define conditions that trigger alerts.
+  # Example: High error rate, circuit breaker open, high latency
+  - 'alerts/sse-alerts.yml'
+  
+  # RECORDING RULES (Optional)
+  # --------------------------
+  # Pre-compute expensive queries and store as new time series.
+  # Example: Calculate request rate once, reuse in multiple dashboards
+  # - 'rules/recording-rules.yml'
+
+# ----------------------------------------------------------------------------
+# SCRAPE CONFIGURATIONS
+# ----------------------------------------------------------------------------
+# Defines which targets to scrape and how to scrape them.
+#
+# SCRAPE JOB STRUCTURE:
+# ---------------------
+# Each job defines:
+# - job_name: Identifier for the job (becomes 'job' label)
+# - scrape_interval: How often to scrape (optional, uses global default)
+# - scrape_timeout: Max time to wait for scrape (default: 10s)
+# - metrics_path: HTTP path to scrape (default: /metrics)
+# - static_configs: List of targets to scrape
+
+scrape_configs:
+  # ==========================================================================
+  # JOB 1: PROMETHEUS SELF-MONITORING
+  # ==========================================================================
+  # Prometheus scrapes its own metrics for self-monitoring.
+  #
+  # WHY MONITOR PROMETHEUS?
+  # -----------------------
+  # - Detect if Prometheus is struggling (high memory, slow queries)
+  # - Monitor scrape success rates
+  # - Track rule evaluation times
+  # - Ensure Prometheus itself is healthy
+  #
+  # METRICS PROVIDED:
+  # -----------------
+  # - prometheus_tsdb_head_samples: Number of samples in memory
+  # - prometheus_tsdb_head_series: Number of time series
+  # - prometheus_http_requests_total: HTTP requests to Prometheus
+  # - prometheus_rule_evaluation_duration_seconds: Rule evaluation time
+  # - prometheus_target_scrapes_total: Total scrapes per target
+  
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # ==========================================================================
+  # JOB 2: SSE APPLICATION INSTANCES
+  # ==========================================================================
+  # Scrapes metrics from all SSE application instances.
+  #
+  # METRICS ENDPOINT:
+  # -----------------
+  # Our application exposes metrics at /admin/metrics (Prometheus format)
+  #
+  # WHAT METRICS ARE COLLECTED?
+  # ----------------------------
+  # See src/infrastructure/monitoring/metrics_collector.py for full list:
+  # - sse_requests_total: Total requests by status, provider, model
+  # - sse_request_duration_seconds: Request latency histogram
+  # - sse_stage_duration_seconds: Stage execution time histogram
+  # - sse_active_connections: Current active connections
+  # - sse_cache_hits_total / sse_cache_misses_total: Cache performance
+  # - sse_circuit_breaker_state: Circuit breaker states
+  # - sse_provider_requests_total: Provider request counts
+  # - sse_chunks_streamed_total: SSE chunks sent
+  # - And many more...
+  
+  - job_name: 'sse-app'
+    
+    # SCRAPE INTERVAL OVERRIDE
+    # ------------------------
+    # Use global default (15s) - commented out to show it's configurable
+    # scrape_interval: 15s
+    
+    # SCRAPE TIMEOUT
+    # --------------
+    # Max time to wait for metrics endpoint to respond.
+    #
+    # WHY 10 SECONDS?
+    # ---------------
+    # - Metrics endpoint should respond quickly (< 1s typically)
+    # - 10s allows for occasional slowness
+    # - Prevents hanging scrapes
+    #
+    # IMPORTANT: Must be less than scrape_interval
+    
+    scrape_timeout: 10s
+    
+    # METRICS PATH
+    # ------------
+    # Our application exposes metrics at /admin/metrics
+    # (Not the default /metrics path)
+    
+    metrics_path: '/admin/metrics'
+    
+    # STATIC TARGETS
+    # --------------
+    # WHAT IS STATIC_CONFIGS?
+    # -----------------------
+    # Manually defined list of targets to scrape.
+    #
+    # ALTERNATIVES:
+    # -------------
+    # - file_sd_configs: Read targets from file (dynamic updates)
+    # - dns_sd_configs: Discover targets via DNS SRV records
+    # - kubernetes_sd_configs: Auto-discover Kubernetes pods/services
+    # - consul_sd_configs: Discover via Consul service registry
+    #
+    # WHY STATIC FOR DOCKER COMPOSE?
+    # -------------------------------
+    # - Simple, explicit configuration
+    # - Docker Compose has fixed service names
+    # - Easy to understand and debug
+    #
+    # FOR KUBERNETES:
+    # ---------------
+    # Use kubernetes_sd_configs to auto-discover pods:
+    # kubernetes_sd_configs:
+    #   - role: pod
+    #     namespaces:
+    #       names: ['sse-app']
+    
+    static_configs:
+      - targets:
+          # APPLICATION INSTANCES
+          # ---------------------
+          # Docker Compose service names with ports
+          # These resolve to container IPs via Docker's internal DNS
+          
+          - 'app-1:8000'  # Instance 1
+          - 'app-2:8000'  # Instance 2
+          - 'app-3:8000'  # Instance 3
+          
+          # SCALING CONSIDERATIONS:
+          # -----------------------
+          # When scaling up/down, update this list or use service discovery.
+          # For dynamic scaling, consider:
+          # - File-based service discovery (update file, Prometheus reloads)
+          # - DNS service discovery (if using DNS SRV records)
+          # - Kubernetes service discovery (auto-discovers pods)
+        
+        # CUSTOM LABELS
+        # -------------
+        # Add labels to all metrics from these targets.
+        #
+        # WHY ADD LABELS?
+        # ---------------
+        # - Filter metrics by application tier
+        # - Distinguish between different deployments
+        # - Group related instances
+        #
+        # EXAMPLE QUERIES:
+        # ----------------
+        # All requests: sse_requests_total
+        # Only app tier: sse_requests_total{tier="application"}
+        # Only instance 1: sse_requests_total{instance="app-1:8000"}
+        
+        labels:
+          tier: 'application'
+          component: 'sse-streaming'
+
+  # ==========================================================================
+  # JOB 3: NGINX LOAD BALANCER
+  # ==========================================================================
+  # Scrapes NGINX metrics for load balancer monitoring via nginx-prometheus-exporter.
+  #
+  # NGINX PROMETHEUS EXPORTER:
+  # ---------------------------
+  # - Converts NGINX stub_status to Prometheus format
+  # - Scrapes /nginx-status endpoint from NGINX
+  # - Exposes comprehensive metrics at /metrics
+  #
+  # METRICS PROVIDED:
+  # -----------------
+  # - nginx_connections_active: Active client connections
+  # - nginx_connections_accepted_total: Total accepted connections
+  # - nginx_connections_handled_total: Total handled connections
+  # - nginx_connections_reading: Reading connections
+  # - nginx_connections_writing: Writing connections
+  # - nginx_connections_waiting: Waiting connections
+  # - nginx_http_requests_total: Total HTTP requests
+  # - nginx_up: Is NGINX responding?
+
+  - job_name: 'nginx'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+
+    static_configs:
+      - targets:
+          - 'nginx-exporter:9113'  # NGINX Prometheus Exporter
+        labels:
+          tier: 'loadbalancer'
+          component: 'nginx'
+
+  # ==========================================================================
+  # JOB 4: REDIS MONITORING
+  # ==========================================================================
+  # Scrapes Redis metrics for cache and state storage monitoring.
+  #
+  # REDIS EXPORTER:
+  # ---------------
+  # Redis doesn't natively expose Prometheus metrics.
+  # We use redis_exporter to convert Redis INFO command output to Prometheus format.
+  #
+  # METRICS PROVIDED:
+  # -----------------
+  # - redis_up: Is Redis responding?
+  # - redis_connected_clients: Number of client connections
+  # - redis_used_memory_bytes: Memory usage
+  # - redis_commands_processed_total: Total commands processed
+  # - redis_keyspace_hits_total / redis_keyspace_misses_total: Cache hit rate
+  # - redis_evicted_keys_total: Keys evicted due to memory pressure
+  # - redis_expired_keys_total: Keys expired
+  # - redis_connected_slaves: Number of replicas
+  # - redis_replication_lag_seconds: Replication lag
+  
+  - job_name: 'redis'
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    
+    static_configs:
+      - targets:
+          # REDIS EXPORTER
+          # --------------
+          # Sidecar container that exposes Redis metrics
+          # Will be added to docker-compose.yml
+          - 'redis-exporter:9121'
+        labels:
+          tier: 'cache'
+          component: 'redis'
+
+  # ==========================================================================
+  # JOB 5: NODE EXPORTER (OPTIONAL - FOR PRODUCTION)
+  # ==========================================================================
+  # Scrapes system-level metrics (CPU, memory, disk, network).
+  #
+  # WHAT IS NODE EXPORTER?
+  # ----------------------
+  # Prometheus exporter for hardware and OS metrics exposed by *NIX kernels.
+  #
+  # METRICS PROVIDED:
+  # -----------------
+  # - node_cpu_seconds_total: CPU usage by mode (user, system, idle, etc.)
+  # - node_memory_MemAvailable_bytes: Available memory
+  # - node_disk_io_time_seconds_total: Disk I/O time
+  # - node_network_receive_bytes_total: Network traffic
+  # - node_filesystem_avail_bytes: Available disk space
+  # - And 100+ more system metrics
+  #
+  # WHY IMPORTANT?
+  # --------------
+  # - Detect resource exhaustion (CPU, memory, disk)
+  # - Correlate application issues with system issues
+  # - Capacity planning
+  # - Performance optimization
+  #
+  # DEPLOYMENT:
+  # -----------
+  # Run node_exporter on each host (not in Docker for accurate host metrics)
+  
+  # Uncomment for production use:
+  # - job_name: 'node-exporter'
+  #   scrape_interval: 15s
+  #   static_configs:
+  #     - targets:
+  #         - 'node-exporter:9100'
+  #       labels:
+  #         tier: 'infrastructure'
+  #         component: 'node-exporter'
+
+# ----------------------------------------------------------------------------
+# STORAGE CONFIGURATION
+# ----------------------------------------------------------------------------
+# Prometheus stores metrics in a time-series database (TSDB).
+#
+# STORAGE LOCATION:
+# -----------------
+# Default: ./data (relative to Prometheus working directory)
+# Docker: Mounted volume (e.g., /prometheus)
+#
+# RETENTION POLICY:
+# -----------------
+# How long to keep metrics before deleting old data.
+#
+# CONFIGURATION OPTIONS:
+# ----------------------
+# 1. Time-based retention (default: 15 days)
+# 2. Size-based retention (delete oldest when size exceeded)
+#
+# EXAMPLE COMMAND-LINE FLAGS:
+# ---------------------------
+# --storage.tsdb.path=/prometheus
+# --storage.tsdb.retention.time=15d
+# --storage.tsdb.retention.size=10GB
+#
+# WHY 15 DAYS?
+# ------------
+# - Enough for troubleshooting recent issues
+# - Keeps storage requirements reasonable
+# - For long-term storage, use Thanos or Cortex
+#
+# STORAGE CALCULATION:
+# --------------------
+# Rough estimate: 1-2 bytes per sample
+# 
+# Example:
+# - 100 time series
+# - 15s scrape interval = 4 samples/minute = 5,760 samples/day
+# - 100 series × 5,760 samples/day × 2 bytes = 1.15 MB/day
+# - 15 days retention = 17.25 MB
+#
+# For our SSE app with ~200 metrics across 3 instances:
+# - 600 time series
+# - ~7 MB/day
+# - 15 days = ~105 MB
+#
+# IMPORTANT: This is a rough estimate. Actual usage varies based on:
+# - Number of unique label combinations (cardinality)
+# - Metric types (histograms use more storage)
+# - Churn rate (how often label values change)
+
+# Storage is configured via command-line flags in docker-compose.yml
+
+# ----------------------------------------------------------------------------
+# REMOTE WRITE (OPTIONAL - FOR LONG-TERM STORAGE)
+# ----------------------------------------------------------------------------
+# Send metrics to remote storage for long-term retention.
+#
+# USE CASES:
+# ----------
+# - Long-term storage (months to years)
+# - Multi-cluster aggregation
+# - Disaster recovery
+# - Compliance requirements
+#
+# REMOTE STORAGE OPTIONS:
+# -----------------------
+# - Thanos: Open-source, S3-compatible storage
+# - Cortex: Multi-tenant Prometheus as a service
+# - VictoriaMetrics: High-performance TSDB
+# - Grafana Cloud: Managed Prometheus
+# - AWS Managed Prometheus
+# - Google Cloud Managed Prometheus
+#
+# EXAMPLE CONFIGURATION:
+# ----------------------
+# remote_write:
+#   - url: "https://prometheus-remote-write.example.com/api/v1/write"
+#     basic_auth:
+#       username: "prometheus"
+#       password: "secret"
+#     queue_config:
+#       capacity: 10000
+#       max_shards: 5
+#       min_shards: 1
+#       max_samples_per_send: 1000
+#       batch_send_deadline: 5s
+
+# ----------------------------------------------------------------------------
+# REMOTE READ (OPTIONAL - FOR QUERYING REMOTE STORAGE)
+# ----------------------------------------------------------------------------
+# Query metrics from remote storage.
+#
+# USE CASE:
+# ---------
+# Query historical data beyond local retention period.
+#
+# EXAMPLE CONFIGURATION:
+# ----------------------
+# remote_read:
+#   - url: "https://prometheus-remote-read.example.com/api/v1/read"
+#     basic_auth:
+#       username: "prometheus"
+#       password: "secret"
+
+# ============================================================================
+# CONFIGURATION SUMMARY
+# ============================================================================
+#
+# WHAT WE'VE CONFIGURED:
+# ----------------------
+# 1. Global settings: 15s scrape interval, development environment labels
+# 2. Alerting: Prepared for Alertmanager integration
+# 3. Rule files: Alert rules for SSE application
+# 4. Scrape jobs:
+#    - Prometheus self-monitoring
+#    - SSE application instances (3 instances)
+#    - NGINX load balancer
+#    - Redis cache
+# 5. Storage: 15-day retention (configured in docker-compose)
+#
+# NEXT STEPS:
+# -----------
+# 1. Deploy Prometheus container (docker-compose.yml)
+# 2. Create alert rules (alerts/sse-alerts.yml)
+# 3. Add redis-exporter to docker-compose
+# 4. Add nginx-prometheus-exporter to docker-compose
+# 5. Configure Grafana to use Prometheus as data source
+# 6. Create Grafana dashboards
+# 7. (Optional) Deploy Alertmanager for alert routing
+# 8. (Optional) Set up remote storage for long-term retention
+#
+# MONITORING PROMETHEUS:
+# ----------------------
+# - Prometheus UI: http://localhost:9090
+# - Targets: http://localhost:9090/targets (check scrape health)
+# - Alerts: http://localhost:9090/alerts (view active alerts)
+# - Config: http://localhost:9090/config (view current configuration)
+# - Metrics: http://localhost:9090/metrics (Prometheus own metrics)
+#
+# ============================================================================

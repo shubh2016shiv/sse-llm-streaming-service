@@ -1,0 +1,631 @@
+# ============================================================================
+# Prometheus Alert Rules for SSE Streaming Application
+# ============================================================================
+#
+# WHAT ARE ALERT RULES?
+# ---------------------
+# Alert rules define conditions that, when met, trigger alerts. Prometheus
+# evaluates these rules periodically and sends alerts to Alertmanager.
+#
+# RULE STRUCTURE:
+# ---------------
+# groups:
+#   - name: group_name
+#     interval: evaluation_interval (optional)
+#     rules:
+#       - alert: AlertName
+#         expr: PromQL expression
+#         for: duration
+#         labels:
+#           severity: critical|warning|info
+#         annotations:
+#           summary: Brief description
+#           description: Detailed description with context
+#
+# KEY CONCEPTS:
+# -------------
+# - expr: PromQL query that returns non-empty result when alert should fire
+# - for: How long condition must be true before alert fires (prevents flapping)
+# - labels: Metadata for routing and grouping alerts
+# - annotations: Human-readable information about the alert
+#
+# PROMQL FUNCTIONS USED:
+# -----------------------
+# - rate(): Calculate per-second rate over time range
+# - increase(): Total increase over time range
+# - histogram_quantile(): Calculate percentile from histogram
+# - sum(): Aggregate across dimensions
+# - avg(): Average across dimensions
+# - by(): Group by specific labels
+# - without(): Group by all labels except specified ones
+#
+# ============================================================================
+
+groups:
+  # ==========================================================================
+  # GROUP 1: APPLICATION HEALTH
+  # ==========================================================================
+  # Alerts related to overall application health and availability.
+  
+  - name: application_health
+    interval: 30s  # Evaluate every 30 seconds
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: High Error Rate
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # More than 5% of requests are failing (status != success)
+      #
+      # WHY 5%?
+      # -------
+      # - Normal error rate should be < 1%
+      # - 5% indicates significant issues
+      # - Not so low that transient errors trigger false alarms
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. rate(sse_requests_total{status!="success"}[5m])
+      #    - Calculate per-second rate of failed requests over last 5 minutes
+      # 2. rate(sse_requests_total[5m])
+      #    - Calculate per-second rate of all requests over last 5 minutes
+      # 3. Divide to get error rate (0.0 to 1.0)
+      # 4. Multiply by 100 to get percentage
+      # 5. Alert if > 5
+      #
+      # FOR DURATION:
+      # -------------
+      # Alert only if condition is true for 2 minutes.
+      # Prevents alerts for brief error spikes.
+      
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(sse_requests_total{status!="success"}[5m]))
+            /
+            sum(rate(sse_requests_total[5m]))
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          component: application
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%). Check application logs and provider health."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-HighErrorRate"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: No Requests
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # No requests received in the last 5 minutes.
+      #
+      # WHY ALERT ON THIS?
+      # ------------------
+      # - Could indicate load balancer issue
+      # - Could indicate DNS problem
+      # - Could indicate application crash
+      # - Helps detect "silent failures"
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. rate(sse_requests_total[5m])
+      #    - Calculate per-second request rate over last 5 minutes
+      # 2. sum() - Aggregate across all instances and labels
+      # 3. Alert if == 0 (no requests)
+      #
+      # IMPORTANT:
+      # ----------
+      # This alert may fire during off-peak hours if traffic is genuinely zero.
+      # Consider adding time-of-day conditions or adjusting for your traffic patterns.
+      
+      - alert: NoRequests
+        expr: sum(rate(sse_requests_total[5m])) == 0
+        for: 5m
+        labels:
+          severity: warning
+          component: application
+        annotations:
+          summary: "No requests received"
+          description: "Application has not received any requests in the last 5 minutes. Check load balancer and DNS."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-NoRequests"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: Instance Down
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Prometheus cannot scrape metrics from an instance.
+      #
+      # WHY IMPORTANT?
+      # --------------
+      # - Instance may have crashed
+      # - Network connectivity issue
+      # - Metrics endpoint not responding
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. up{job="sse-app"}
+      #    - Prometheus sets 'up' to 1 if scrape succeeds, 0 if fails
+      # 2. Alert if == 0 (scrape failed)
+      #
+      # FOR DURATION:
+      # -------------
+      # Alert immediately (for: 0m) because instance down is critical.
+      # However, we still wait 1 minute to avoid alerts during restarts.
+      
+      - alert: InstanceDown
+        expr: up{job="sse-app"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Instance {{ $labels.instance }} is down"
+          description: "Prometheus cannot scrape metrics from {{ $labels.instance }}. Instance may be down or unreachable."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-InstanceDown"
+
+  # ==========================================================================
+  # GROUP 2: PERFORMANCE
+  # ==========================================================================
+  # Alerts related to application performance and latency.
+  
+  - name: performance
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: High P95 Latency
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # 95th percentile request latency exceeds 2 seconds.
+      #
+      # WHY P95?
+      # --------
+      # - P95 means 95% of requests are faster, 5% are slower
+      # - Better than average (can hide outliers)
+      # - Better than max (too sensitive to occasional spikes)
+      # - Industry standard for SLAs
+      #
+      # WHY 2 SECONDS?
+      # --------------
+      # - User-perceivable delay
+      # - Indicates performance degradation
+      # - Adjust based on your SLA requirements
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. sse_request_duration_seconds_bucket
+      #    - Histogram buckets for request duration
+      # 2. histogram_quantile(0.95, ...)
+      #    - Calculate 95th percentile from histogram
+      # 3. sum(rate(...[5m])) by (le)
+      #    - Calculate rate for each bucket over 5 minutes
+      # 4. Alert if > 2 (seconds)
+      
+      - alert: HighP95Latency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(sse_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "High P95 latency detected"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} (threshold: 2s). Check provider performance and database queries."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-HighLatency"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: High P99 Latency
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # 99th percentile request latency exceeds 5 seconds.
+      #
+      # WHY P99?
+      # --------
+      # - Catches worst-case user experience
+      # - 1% of users experiencing very slow requests
+      # - Important for user satisfaction
+      #
+      # WHY 5 SECONDS?
+      # --------------
+      # - Significantly degraded experience
+      # - May indicate timeouts or retries
+      # - Higher threshold than P95 (allows for some slow requests)
+      
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(sse_request_duration_seconds_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: critical
+          component: performance
+        annotations:
+          summary: "High P99 latency detected"
+          description: "99th percentile latency is {{ $value | humanizeDuration }} (threshold: 5s). Immediate investigation required."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-HighLatency"
+
+  # ==========================================================================
+  # GROUP 3: CIRCUIT BREAKERS
+  # ==========================================================================
+  # Alerts related to circuit breaker states and provider health.
+  
+  - name: circuit_breakers
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: Circuit Breaker Open
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # A circuit breaker has been open for more than 1 minute.
+      #
+      # WHAT DOES "OPEN" MEAN?
+      # ----------------------
+      # - Circuit breaker is blocking requests to a provider
+      # - Provider has failed too many times
+      # - Requests will fail fast without calling provider
+      #
+      # WHY ALERT?
+      # ----------
+      # - Provider outage or degradation
+      # - May affect user experience
+      # - Need to investigate provider health
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. sse_circuit_breaker_state
+      #    - Gauge: 0=closed, 1=half-open, 2=open
+      # 2. Alert if == 2 (open)
+      # 3. Group by provider to identify which provider is affected
+      
+      - alert: CircuitBreakerOpen
+        expr: sse_circuit_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warning
+          component: resilience
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.provider }}"
+          description: "Circuit breaker for {{ $labels.provider }} has been open for more than 1 minute. Provider may be experiencing issues."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-CircuitBreakerOpen"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: High Circuit Breaker Failure Rate
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Circuit breaker is recording many failures (approaching open threshold).
+      #
+      # WHY ALERT?
+      # ----------
+      # - Early warning before circuit opens
+      # - Provider may be degraded
+      # - Allows proactive investigation
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. rate(sse_circuit_breaker_failures_total[5m])
+      #    - Per-second failure rate over 5 minutes
+      # 2. Alert if > 0.5 (0.5 failures per second = 30 failures per minute)
+      
+      - alert: HighCircuitBreakerFailureRate
+        expr: rate(sse_circuit_breaker_failures_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          component: resilience
+        annotations:
+          summary: "High failure rate for {{ $labels.provider }}"
+          description: "Circuit breaker for {{ $labels.provider }} is recording {{ $value | humanize }} failures/sec. Provider may be degraded."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-ProviderDegraded"
+
+  # ==========================================================================
+  # GROUP 4: CACHE PERFORMANCE
+  # ==========================================================================
+  # Alerts related to cache hit rates and cache health.
+  
+  - name: cache_performance
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: Low Cache Hit Rate
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Cache hit rate below 50% for L2 (Redis) cache.
+      #
+      # WHY 50%?
+      # --------
+      # - Expected hit rate depends on traffic patterns
+      # - 50% is conservative threshold
+      # - Lower hit rate means more expensive LLM calls
+      #
+      # IMPACT:
+      # -------
+      # - Increased latency (cache misses require LLM calls)
+      # - Increased cost (more API calls to providers)
+      # - Increased load on providers
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. rate(sse_cache_hits_total{tier="L2"}[5m])
+      #    - Per-second cache hit rate
+      # 2. rate(sse_cache_hits_total{tier="L2"}[5m]) + rate(sse_cache_misses_total{tier="L2"}[5m])
+      #    - Total cache operations (hits + misses)
+      # 3. Divide to get hit rate (0.0 to 1.0)
+      # 4. Alert if < 0.5 (50%)
+      
+      - alert: LowCacheHitRate
+        expr: |
+          (
+            sum(rate(sse_cache_hits_total{tier="L2"}[5m]))
+            /
+            (
+              sum(rate(sse_cache_hits_total{tier="L2"}[5m]))
+              +
+              sum(rate(sse_cache_misses_total{tier="L2"}[5m]))
+            )
+          ) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Low cache hit rate"
+          description: "L2 cache hit rate is {{ $value | humanizePercentage }} (threshold: 50%). Consider increasing cache TTL or investigating query patterns."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-LowCacheHitRate"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: Redis Connection Failures
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Increasing number of Redis connection errors.
+      #
+      # WHY ALERT?
+      # ----------
+      # - Redis may be down or overloaded
+      # - Network connectivity issues
+      # - Connection pool exhaustion
+      #
+      # IMPACT:
+      # -------
+      # - Cache unavailable (degrades to direct LLM calls)
+      # - Circuit breaker state not shared across instances
+      # - Rate limiting not distributed
+      
+      - alert: RedisConnectionFailures
+        expr: increase(redis_errors_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          component: cache
+        annotations:
+          summary: "Redis connection failures detected"
+          description: "{{ $value }} Redis connection errors in the last 5 minutes. Check Redis health and network connectivity."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-RedisDown"
+
+  # ==========================================================================
+  # GROUP 5: RESOURCE UTILIZATION
+  # ==========================================================================
+  # Alerts related to resource usage (memory, connections, etc.).
+  
+  - name: resource_utilization
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: High Active Connections
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # More than 500 active SSE connections per instance.
+      #
+      # WHY 500?
+      # --------
+      # - Depends on instance capacity
+      # - Adjust based on load testing results
+      # - Indicates approaching capacity limits
+      #
+      # IMPACT:
+      # -------
+      # - May need to scale up (add more instances)
+      # - Increased memory usage
+      # - Potential performance degradation
+      
+      - alert: HighActiveConnections
+        expr: sse_active_connections > 500
+        for: 5m
+        labels:
+          severity: warning
+          component: capacity
+        annotations:
+          summary: "High active connections on {{ $labels.instance }}"
+          description: "{{ $labels.instance }} has {{ $value }} active connections (threshold: 500). Consider scaling up."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-HighConnections"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: High Memory Usage
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Memory usage above 80% of available memory.
+      #
+      # WHY 80%?
+      # --------
+      # - Leaves buffer for traffic spikes
+      # - Prevents OOM (Out Of Memory) kills
+      # - Early warning before critical threshold
+      #
+      # NOTE:
+      # -----
+      # This requires node_exporter to be running.
+      # Uncomment when node_exporter is deployed.
+      
+      # - alert: HighMemoryUsage
+      #   expr: |
+      #     (
+      #       node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes
+      #     ) / node_memory_MemTotal_bytes * 100 > 80
+      #   for: 5m
+      #   labels:
+      #     severity: warning
+      #     component: infrastructure
+      #   annotations:
+      #     summary: "High memory usage on {{ $labels.instance }}"
+      #     description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 80%). Consider scaling up or investigating memory leaks."
+      #     runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-HighMemory"
+
+  # ==========================================================================
+  # GROUP 6: RATE LIMITING
+  # ==========================================================================
+  # Alerts related to rate limiting and abuse detection.
+  
+  - name: rate_limiting
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: High Rate Limit Exceeded Events
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # Spike in rate limit exceeded events.
+      #
+      # WHY ALERT?
+      # ----------
+      # - Possible abuse or attack
+      # - Legitimate user hitting limits (may need tier upgrade)
+      # - Misconfigured client (retry loop)
+      #
+      # PROMQL EXPLANATION:
+      # -------------------
+      # 1. rate(sse_rate_limit_exceeded_total[5m])
+      #    - Per-second rate of rate limit events
+      # 2. Alert if > 1 (1 event per second = 60 per minute)
+      
+      - alert: HighRateLimitExceeded
+        expr: rate(sse_rate_limit_exceeded_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "High rate of rate limit exceeded events"
+          description: "{{ $value | humanize }} rate limit exceeded events per second. Possible abuse or misconfigured client."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-RateLimitAbuse"
+
+  # ==========================================================================
+  # GROUP 7: PROVIDER HEALTH
+  # ==========================================================================
+  # Alerts related to LLM provider performance and availability.
+  
+  - name: provider_health
+    interval: 30s
+    
+    rules:
+      # ------------------------------------------------------------------------
+      # ALERT: High Provider Error Rate
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # More than 10% of requests to a specific provider are failing.
+      #
+      # WHY PER-PROVIDER?
+      # -----------------
+      # - Isolate which provider is having issues
+      # - May need to failover to different provider
+      # - Provider-specific investigation needed
+      
+      - alert: HighProviderErrorRate
+        expr: |
+          (
+            sum(rate(sse_provider_requests_total{status!="success"}[5m])) by (provider)
+            /
+            sum(rate(sse_provider_requests_total[5m])) by (provider)
+          ) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: provider
+        annotations:
+          summary: "High error rate for {{ $labels.provider }}"
+          description: "{{ $labels.provider }} error rate is {{ $value | humanizePercentage }} (threshold: 10%). Provider may be experiencing issues."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-ProviderErrors"
+      
+      # ------------------------------------------------------------------------
+      # ALERT: High Provider Latency
+      # ------------------------------------------------------------------------
+      # WHAT IT DETECTS:
+      # ----------------
+      # P95 latency for a specific provider exceeds 3 seconds.
+      #
+      # WHY 3 SECONDS?
+      # --------------
+      # - LLM calls are naturally slower than typical API calls
+      # - 3s is reasonable for generation start
+      # - Adjust based on provider SLAs
+      
+      - alert: HighProviderLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(sse_provider_latency_seconds_bucket[5m])) by (provider, le)
+          ) > 3
+        for: 5m
+        labels:
+          severity: warning
+          component: provider
+        annotations:
+          summary: "High latency for {{ $labels.provider }}"
+          description: "{{ $labels.provider }} P95 latency is {{ $value | humanizeDuration }} (threshold: 3s). Provider may be slow or overloaded."
+          runbook_url: "https://github.com/your-org/sse-app/wiki/Runbook-ProviderSlow"
+
+# ============================================================================
+# ALERT RULE SUMMARY
+# ============================================================================
+#
+# ALERT GROUPS:
+# -------------
+# 1. Application Health: Error rates, instance availability
+# 2. Performance: Latency (P95, P99)
+# 3. Circuit Breakers: Provider health, failure rates
+# 4. Cache Performance: Hit rates, Redis connectivity
+# 5. Resource Utilization: Connections, memory
+# 6. Rate Limiting: Abuse detection
+# 7. Provider Health: Per-provider errors and latency
+#
+# SEVERITY LEVELS:
+# ----------------
+# - critical: Immediate action required, user impact
+# - warning: Investigate soon, potential user impact
+# - info: Informational, no immediate action
+#
+# BEST PRACTICES USED:
+# --------------------
+# 1. FOR duration: Prevents alert flapping
+# 2. Meaningful thresholds: Based on SLAs and capacity
+# 3. Runbook links: Guide on-call engineers
+# 4. Descriptive annotations: Context for investigation
+# 5. Grouped by component: Easier to manage and route
+#
+# NEXT STEPS:
+# -----------
+# 1. Deploy Alertmanager for alert routing
+# 2. Configure notification channels (Slack, PagerDuty, email)
+# 3. Set up alert routing rules (route by severity, component)
+# 4. Test alerts by triggering conditions
+# 5. Tune thresholds based on actual traffic patterns
+# 6. Create runbook documentation for each alert
+#
+# ============================================================================
