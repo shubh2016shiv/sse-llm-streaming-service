@@ -5,6 +5,7 @@ Tests StreamRequest data model and invariants.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from src.llm_stream.models.stream_request import SSEEvent, StreamRequest
 
@@ -133,7 +134,7 @@ class TestStreamRequest:
         )
 
         # Attempt to modify (should fail or be prevented)
-        with pytest.raises((AttributeError, TypeError)):
+        with pytest.raises(ValidationError):
             request.query = "Modified query"
 
     def test_stream_request_handles_unicode(self):

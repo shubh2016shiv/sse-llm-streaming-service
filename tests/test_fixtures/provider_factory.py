@@ -5,7 +5,7 @@ Creates controllable provider stubs for testing various scenarios.
 """
 
 
-from src.llm_stream.providers.base_provider import BaseProvider, StreamChunk
+from src.llm_stream.providers.base_provider import BaseProvider, ProviderConfig, StreamChunk
 
 
 class ProviderTestFactory:
@@ -25,15 +25,30 @@ class ProviderTestFactory:
 
         class SuccessProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                # Create minimal config for test provider
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
                 self._chunks = chunks
+                self._circuit_state = "closed"
 
-            def get_circuit_state(self):
-                return "closed"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 for chunk in self._chunks:
                     yield chunk
+
+            def _validate_model(self, model: str) -> None:
+                # Accept any model for testing
+                pass
+
+            async def health_check(self):
+                return {"status": "healthy", "provider": self.name}
 
         return SuccessProvider()
 
@@ -45,14 +60,28 @@ class ProviderTestFactory:
 
         class FailingProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
                 self._error = error
+                self._circuit_state = "closed"
 
-            def get_circuit_state(self):
-                return "closed"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 raise self._error
+                yield  # Make it a generator
+
+            def _validate_model(self, model: str) -> None:
+                pass
+
+            async def health_check(self):
+                return {"status": "unhealthy", "provider": self.name}
 
         return FailingProvider()
 
@@ -62,14 +91,28 @@ class ProviderTestFactory:
 
         class OpenCircuitProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
+                self._circuit_state = "open"
 
-            def get_circuit_state(self):
-                return "open"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 # Should not be called due to circuit breaker
                 raise Exception("Should not be called")
+                yield  # Make it a generator
+
+            def _validate_model(self, model: str) -> None:
+                pass
+
+            async def health_check(self):
+                return {"status": "circuit_open", "provider": self.name}
 
         return OpenCircuitProvider()
 
@@ -80,15 +123,28 @@ class ProviderTestFactory:
 
         class SlowProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
                 self._delay = delay
+                self._circuit_state = "closed"
 
-            def get_circuit_state(self):
-                return "closed"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 await asyncio.sleep(self._delay)
                 yield StreamChunk(content="Slow response", finish_reason="stop")
+
+            def _validate_model(self, model: str) -> None:
+                pass
+
+            async def health_check(self):
+                return {"status": "healthy", "provider": self.name}
 
         return SlowProvider()
 
@@ -98,13 +154,26 @@ class ProviderTestFactory:
 
         class EmptyProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
+                self._circuit_state = "closed"
 
-            def get_circuit_state(self):
-                return "closed"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 yield StreamChunk(content="", finish_reason="stop")
+
+            def _validate_model(self, model: str) -> None:
+                pass
+
+            async def health_check(self):
+                return {"status": "healthy", "provider": self.name}
 
         return EmptyProvider()
 
@@ -115,14 +184,27 @@ class ProviderTestFactory:
 
         class TimeoutProvider(BaseProvider):
             def __init__(self):
-                self.name = name
+                config = ProviderConfig(
+                    name=name,
+                    api_key="test-key",
+                    base_url="http://test",
+                    default_model="test-model"
+                )
+                super().__init__(config)
                 self._timeout = timeout
+                self._circuit_state = "closed"
 
-            def get_circuit_state(self):
-                return "closed"
+            async def get_circuit_state(self):
+                return self._circuit_state
 
-            async def stream(self, query, model, thread_id):
+            async def _stream_internal(self, query, model, thread_id=None, **kwargs):
                 await asyncio.sleep(self._timeout)
                 yield StreamChunk(content="Should not reach here", finish_reason="stop")
+
+            def _validate_model(self, model: str) -> None:
+                pass
+
+            async def health_check(self):
+                return {"status": "healthy", "provider": self.name}
 
         return TimeoutProvider()

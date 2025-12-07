@@ -196,7 +196,8 @@ def mock_execution_tracker():
     # Mock context manager for track_stage
     tracker.track_stage = MagicMock()
     tracker.track_stage.return_value.__enter__ = MagicMock()
-    tracker.track_stage.return_value.__exit__ = MagicMock()
+    # Return None from __exit__ so exceptions are NOT swallowed
+    tracker.track_stage.return_value.__exit__ = MagicMock(return_value=None)
 
     tracker.get_execution_summary = MagicMock(return_value={"total_duration_ms": 100, "stages": []})
     tracker.clear_thread_data = MagicMock()
@@ -223,7 +224,7 @@ def mock_provider_factory():
     mock_provider.stream = AsyncMock()
 
     factory.get = MagicMock(return_value=mock_provider)
-    factory.get_healthy_provider = MagicMock(return_value=mock_provider)
+    factory.get_healthy_provider = AsyncMock(return_value=mock_provider)
     factory.get_available = MagicMock(return_value=["test-provider"])
 
     return factory
@@ -400,6 +401,8 @@ async def cache_manager(mock_settings):
         mock_redis.get = AsyncMock(return_value=None)
         mock_redis.set = AsyncMock(return_value=True)
         mock_redis.health_check = AsyncMock(return_value={"status": "healthy"})
+        # Return None to test fallback
+        mock_redis.get_pipeline_manager = AsyncMock(return_value=None)
         mock_get_redis.return_value = mock_redis
 
         # Initialize

@@ -315,7 +315,7 @@ class TestCacheManager:
         async def expensive_compute():
             return computed_value
 
-        result = await cache_manager.get_or_compute(key, computed_value)
+        result = await cache_manager.get_or_compute(key, expensive_compute)
 
         assert result == computed_value
 

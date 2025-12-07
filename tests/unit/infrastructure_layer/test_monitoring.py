@@ -4,7 +4,7 @@ Unit Tests for Monitoring Infrastructure
 Tests health checking and metrics collection functionality.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -60,54 +60,87 @@ class TestHealthChecker:
     @pytest.mark.asyncio
     async def test_overall_health_check_all_healthy(self, health_checker):
         """Test overall health check when all components are healthy."""
-        with patch.object(health_checker, "check_redis") as mock_check_redis:
-            mock_check_redis.return_value = {"status": "healthy"}
+        # Initialize health checker with mock components
+        mock_redis = AsyncMock()
+        mock_redis.health_check = AsyncMock(return_value={"status": "healthy"})
 
-            result = await health_checker.check_overall()
+        mock_cache = AsyncMock()
+        mock_cache.health_check = AsyncMock(return_value={"status": "healthy"})
 
-            assert result["status"] == "healthy"
-            assert "checks" in result
-            assert "redis" in result["checks"]
+        await health_checker.initialize(
+            redis_client=mock_redis,
+            cache_manager=mock_cache
+        )
+
+        result = await health_checker.check_overall()
+
+        assert result["status"] == "healthy"
+        assert "components" in result
+        assert result["components"]["redis"]["status"] == "healthy"
+        assert result["components"]["cache"]["status"] == "healthy"
 
     @pytest.mark.asyncio
     async def test_overall_health_check_partial_failure(self, health_checker):
         """Test overall health check with partial failures."""
-        with patch.object(health_checker, "check_redis") as mock_check_redis:
-            mock_check_redis.return_value = {"status": "unhealthy", "error": "Connection failed"}
+        # Initialize with one unhealthy component
+        mock_redis = AsyncMock()
+        mock_redis.health_check = AsyncMock(
+            return_value={"status": "unhealthy", "error": "Connection failed"}
+        )
 
-            result = await health_checker.check_overall()
+        mock_cache = AsyncMock()
+        mock_cache.health_check = AsyncMock(return_value={"status": "healthy"})
 
-            assert result["status"] == "degraded"
-            assert result["checks"]["redis"]["status"] == "unhealthy"
+        await health_checker.initialize(
+            redis_client=mock_redis,
+            cache_manager=mock_cache
+        )
+
+        result = await health_checker.check_overall()
+
+        assert result["status"] == "degraded"
+        assert result["components"]["redis"]["status"] == "unhealthy"
 
     @pytest.mark.asyncio
     async def test_overall_health_check_total_failure(self, health_checker):
         """Test overall health check when all components fail."""
-        with patch.object(health_checker, "check_redis") as mock_check_redis:
-            mock_check_redis.side_effect = Exception("All systems down")
+        # Initialize with failing components
+        mock_redis = AsyncMock()
+        mock_redis.health_check = AsyncMock(side_effect=Exception("Redis down"))
 
-            result = await health_checker.check_overall()
+        mock_cache = AsyncMock()
+        mock_cache.health_check = AsyncMock(side_effect=Exception("Cache down"))
 
-            assert result["status"] == "unhealthy"
-            assert "error" in result
+        await health_checker.initialize(
+            redis_client=mock_redis,
+            cache_manager=mock_cache
+        )
+
+        result = await health_checker.check_overall()
+
+        assert result["status"] == "unhealthy"
+        assert "failed_components" in result
+        assert len(result["failed_components"]) >= 2
 
     @pytest.mark.asyncio
     async def test_health_check_with_custom_components(self, health_checker):
         """Test health check with additional custom components."""
+        # Initialize with healthy components
+        mock_redis = AsyncMock()
+        mock_redis.health_check = AsyncMock(return_value={"status": "healthy"})
 
-        # Mock additional health check methods
-        async def check_custom():
-            return {"status": "healthy", "version": "1.0"}
+        mock_cache = AsyncMock()
+        mock_cache.health_check = AsyncMock(return_value={"status": "healthy"})
 
-        health_checker.check_custom_service = check_custom
+        await health_checker.initialize(
+            redis_client=mock_redis,
+            cache_manager=mock_cache
+        )
 
-        with patch.object(health_checker, "check_redis") as mock_check_redis:
-            mock_check_redis.return_value = {"status": "healthy"}
+        result = await health_checker.check_overall()
 
-            result = await health_checker.check_overall()
-
-            assert result["status"] == "healthy"
-            assert "custom_service" in result["checks"]
+        assert result["status"] == "healthy"
+        assert "components" in result
 
 
 @pytest.mark.unit

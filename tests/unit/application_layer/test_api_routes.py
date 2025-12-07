@@ -325,17 +325,25 @@ class TestAPIValidation:
         assert response.status_code in [400, 422, 500]
 
     def test_thread_id_format_validation(self, client):
-        """Test API validates thread_id format."""
+        """Test API ignores extra fields like thread_id (server-generated)."""
+        # thread_id is NOT part of StreamRequestModel - it's generated server-side
+        # This test verifies that extra fields are ignored (Pydantic default behavior)
         response = client.post(
             "/stream",
             json={
                 "query": "Test query",
                 "model": "gpt-3.5-turbo",
                 "provider": "openai",
-                "thread_id": "",  # Empty thread_id
+                "thread_id": "",  # Extra field - should be ignored
                 "user_id": "test-user",
             },
         )
 
-        # Should reject empty thread_id
-        assert response.status_code in [400, 422, 500]
+        # Should succeed - Pydantic ignores extra fields by default
+        # The API generates thread_id server-side from headers or auto-generates it
+        assert response.status_code == 200
+
+
+
+
+
