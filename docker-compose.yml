@@ -1,9 +1,395 @@
 version: '3.8'
 
+# ============================================================================
+# ENTERPRISE SSE STREAMING APPLICATION - DOCKER COMPOSE CONFIGURATION
+# ============================================================================
+#
+# This Docker Compose file defines the complete infrastructure for the SSE
+# streaming application, including:
+# - Application instances (scaled to 3 for load balancing)
+# - NGINX load balancer
+# - Redis cache and state storage
+# - Prometheus monitoring
+# - Grafana visualization
+# - Kafka message queue (optional)
+#
+# ARCHITECTURE OVERVIEW:
+# ----------------------
+#   Client → NGINX (Port 80) → App Instances (3x)
+#                            → Prometheus (scrapes metrics)
+#                            → Grafana (visualizes metrics)
+#                            → Redis (cache + state)
+#                            → Kafka (optional queue)
+#
+# QUICK START:
+# ------------
+# 1. Ensure .env file exists with required API keys
+# 2. Start infrastructure: docker-compose up -d
+# 3. Check health: docker-compose ps
+# 4. Access application: http://localhost
+# 5. Access Grafana: http://localhost:3000 (admin/admin)
+# 6. Access Prometheus: http://localhost:9090
+#
+# ============================================================================
+
 services:
-  # ============================================================================
-  # Redis Master - Primary cache and state storage
-  # ============================================================================
+  # ==========================================================================
+  # LOAD BALANCER - NGINX
+  # ==========================================================================
+  # WHAT IT DOES:
+  # -------------
+  # - Distributes traffic across multiple app instances
+  # - Performs health checks on backend servers
+  # - Provides single entry point for clients
+  # - Handles connection management and timeouts
+  #
+  # WHY NGINX?
+  # ----------
+  # - High performance (handles 10,000+ concurrent connections)
+  # - Low resource usage
+  # - Battle-tested in production
+  # - Excellent SSE streaming support
+  
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: sse-nginx
+    
+    # PORT MAPPING
+    # ------------
+    # 80:80 - HTTP traffic (redirects to HTTPS)
+    # 443:443 - HTTPS traffic (main application entry point with SSL/TLS)
+    ports:
+      - "80:80"
+      - "443:443"
+    
+    # VOLUME MOUNTS
+    # -------------
+    # Mount custom NGINX configuration and SSL certificates
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./infrastructure/nginx/ssl:/etc/nginx/ssl:ro
+    
+    # DEPENDENCIES
+    # ------------
+    # Wait for at least one app instance to be healthy before starting
+    depends_on:
+      app-1:
+        condition: service_healthy
+    
+    # HEALTH CHECK
+    # ------------
+    # Verify NGINX is responding
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    
+    networks:
+      - sse-network
+    
+    restart: unless-stopped
+
+  # ==========================================================================
+  # APPLICATION INSTANCES (3 REPLICAS FOR LOAD BALANCING)
+  # ==========================================================================
+  # WHY 3 INSTANCES?
+  # ----------------
+  # - High availability (if one fails, others continue)
+  # - Load distribution (handle more concurrent requests)
+  # - Zero-downtime deployments (update one at a time)
+  # - Demonstrates load balancing in action
+  #
+  # SCALING:
+  # --------
+  # To add more instances, duplicate the app-1 configuration
+  # and update the instance number (app-4, app-5, etc.)
+  # Don't forget to add them to nginx upstream configuration!
+  
+  # Instance 1
+  app-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sse-app-1
+    hostname: app-1  # Used by NGINX upstream
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - DEBUG=false
+      - CB_FAILURE_THRESHOLD=5
+      - CB_RECOVERY_TIMEOUT=60
+      - RATE_LIMIT_DEFAULT=100/minute
+      - RATE_LIMIT_PREMIUM=1000/minute
+      - CACHE_RESPONSE_TTL=3600
+      - CACHE_SESSION_TTL=86400
+      - QUEUE_TYPE=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    
+    # EXPOSE (NOT PUBLISH)
+    # --------------------
+    # expose makes port available to other containers
+    # but NOT to host machine (security best practice)
+    # NGINX accesses via internal network
+    expose:
+      - "8000"
+    
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    
+    networks:
+      - sse-network
+    
+    restart: unless-stopped
+    
+    command: uvicorn src.application.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # Instance 2
+  app-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sse-app-2
+    hostname: app-2
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - DEBUG=false
+      - CB_FAILURE_THRESHOLD=5
+      - CB_RECOVERY_TIMEOUT=60
+      - RATE_LIMIT_DEFAULT=100/minute
+      - RATE_LIMIT_PREMIUM=1000/minute
+      - CACHE_RESPONSE_TTL=3600
+      - CACHE_SESSION_TTL=86400
+      - QUEUE_TYPE=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    expose:
+      - "8000"
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - sse-network
+    restart: unless-stopped
+    command: uvicorn src.application.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # Instance 3
+  app-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sse-app-3
+    hostname: app-3
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis-master
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - ENVIRONMENT=development
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=json
+      - DEBUG=false
+      - CB_FAILURE_THRESHOLD=5
+      - CB_RECOVERY_TIMEOUT=60
+      - RATE_LIMIT_DEFAULT=100/minute
+      - RATE_LIMIT_PREMIUM=1000/minute
+      - CACHE_RESPONSE_TTL=3600
+      - CACHE_SESSION_TTL=86400
+      - QUEUE_TYPE=redis
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    expose:
+      - "8000"
+    volumes:
+      - ./src:/app/src
+      - ./logs:/app/logs
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    networks:
+      - sse-network
+    restart: unless-stopped
+    command: uvicorn src.application.app:app --host 0.0.0.0 --port 8000 --reload
+
+  # ==========================================================================
+  # PROMETHEUS - METRICS COLLECTION AND ALERTING
+  # ==========================================================================
+  # WHAT IT DOES:
+  # -------------
+  # - Scrapes metrics from all application instances
+  # - Stores time-series data
+  # - Evaluates alert rules
+  # - Provides query interface (PromQL)
+  #
+  # DATA RETENTION:
+  # ---------------
+  # Default: 15 days (configurable via --storage.tsdb.retention.time)
+  # Adjust based on your needs and available storage
+  
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: sse-prometheus
+    
+    # COMMAND-LINE FLAGS
+    # ------------------
+    # Configure Prometheus behavior
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'  # Keep 15 days of data
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'  # Allow config reload via API
+    
+    ports:
+      - "9090:9090"
+    
+    volumes:
+      # Configuration files
+      - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infrastructure/prometheus/alerts:/etc/prometheus/alerts:ro
+      
+      # Data storage (persistent)
+      - prometheus-data:/prometheus
+    
+    depends_on:
+      - app-1
+      - app-2
+      - app-3
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    
+    networks:
+      - sse-network
+    
+    restart: unless-stopped
+
+  # ==========================================================================
+  # GRAFANA - METRICS VISUALIZATION
+  # ==========================================================================
+  # WHAT IT DOES:
+  # -------------
+  # - Visualizes Prometheus metrics in dashboards
+  # - Provides alerting and notification
+  # - Supports multiple data sources
+  # - Enables data exploration and analysis
+  #
+  # DEFAULT CREDENTIALS:
+  # --------------------
+  # Username: admin
+  # Password: admin (change on first login)
+  
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: sse-grafana
+    
+    # ENVIRONMENT VARIABLES
+    # ---------------------
+    # Configure Grafana behavior
+    environment:
+      # SECURITY
+      # --------
+      # Change these in production!
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      
+      # ANONYMOUS ACCESS
+      # ----------------
+      # Disable in production
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      
+      # PROVISIONING
+      # ------------
+      # Enable automatic provisioning of data sources and dashboards
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      
+      # LOGGING
+      # -------
+      - GF_LOG_LEVEL=info
+      
+      # INSTALL PLUGINS
+      # ---------------
+      # Comma-separated list of plugins to install on startup
+      # - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+    
+    ports:
+      - "3000:3000"
+    
+    volumes:
+      # Provisioning configuration
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
+      
+      # Dashboard JSON files
+      - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards/files:ro
+      
+      # Persistent storage for Grafana database
+      - grafana-data:/var/lib/grafana
+    
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    
+    networks:
+      - sse-network
+    
+    restart: unless-stopped
+
+  # ==========================================================================
+  # REDIS - CACHE AND STATE STORAGE
+  # ==========================================================================
+  
   redis-master:
     image: redis:7-alpine
     container_name: sse-redis-master
@@ -14,7 +400,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -22,9 +408,10 @@ services:
       - sse-network
     restart: unless-stopped
 
-  # ============================================================================
-  # Redis Commander - Web UI for Redis management
-  # ============================================================================
+  # ==========================================================================
+  # REDIS COMMANDER - REDIS WEB UI
+  # ==========================================================================
+  
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: sse-redis-commander
@@ -39,60 +426,41 @@ services:
       - sse-network
     restart: unless-stopped
 
-  # ============================================================================
-  # SSE Streaming Application
-  # ============================================================================
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: sse-app
-    env_file:
-      - .env
+  # ==========================================================================
+  # REDIS EXPORTER - PROMETHEUS METRICS FOR REDIS
+  # ==========================================================================
+  # WHAT IT DOES:
+  # -------------
+  # - Exports Redis metrics in Prometheus format
+  # - Monitors Redis health, memory, connections, etc.
+  # - Enables Redis monitoring in Grafana
+  
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.55.0-alpine
+    container_name: sse-redis-exporter
+    
+    # REDIS CONNECTION
+    # ----------------
+    # Point to Redis master
     environment:
-      # Redis Configuration
-      - REDIS_HOST=redis-master
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-
-      # Application Configuration
-      - ENVIRONMENT=development
-      - LOG_LEVEL=INFO
-      - LOG_FORMAT=json
-      - DEBUG=false
-
-      # Circuit Breaker Configuration
-      - CB_FAILURE_THRESHOLD=5
-      - CB_RECOVERY_TIMEOUT=60
-
-      # Rate Limiting Configuration
-      - RATE_LIMIT_DEFAULT=100/minute
-      - RATE_LIMIT_PREMIUM=1000/minute
-
-      # Cache Configuration
-      - CACHE_RESPONSE_TTL=3600
-      - CACHE_SESSION_TTL=86400
-
-      # Queue Configuration
-      - QUEUE_TYPE=redis # or kafka
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - REDIS_ADDR=redis-master:6379
+    
     ports:
-      - "8000:8000"
-    volumes:
-      # Mount source code for hot-reload in development
-      - ./src:/app/src
-      - ./logs:/app/logs
+      - "9121:9121"
+    
     depends_on:
       redis-master:
         condition: service_healthy
+    
     networks:
       - sse-network
+    
     restart: unless-stopped
-    command: uvicorn src.app:app --host 0.0.0.0 --port 8000 --reload
 
-  # ============================================================================
-  # Kafka - Message Queue (Alternative to Redis)
-  # ============================================================================
+  # ==========================================================================
+  # KAFKA INFRASTRUCTURE (OPTIONAL)
+  # ==========================================================================
+  
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: sse-zookeeper
@@ -132,14 +500,11 @@ services:
       - sse-network
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ============================================================================
-  # Kafka UI - Web interface for Kafka
-  # ============================================================================
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: sse-kafka-ui
@@ -156,11 +521,27 @@ services:
     restart: unless-stopped
 
 # ============================================================================
-# Volumes
+# VOLUMES - PERSISTENT DATA STORAGE
 # ============================================================================
+# WHY NAMED VOLUMES?
+# ------------------
+# - Data persists across container restarts
+# - Easy to backup and restore
+# - Better performance than bind mounts
+# - Managed by Docker
+
 volumes:
+  # Application data
   redis-data:
     driver: local
+  
+  # Monitoring data
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  
+  # Message queue data
   zookeeper-data:
     driver: local
   zookeeper-logs:
@@ -169,9 +550,59 @@ volumes:
     driver: local
 
 # ============================================================================
-# Networks
+# NETWORKS
 # ============================================================================
+# WHY CUSTOM NETWORK?
+# -------------------
+# - Containers can communicate by service name
+# - Network isolation from other Docker projects
+# - Enables service discovery
+
 networks:
   sse-network:
     driver: bridge
     name: sse-network
+
+# ============================================================================
+# USAGE INSTRUCTIONS
+# ============================================================================
+#
+# START ALL SERVICES:
+# -------------------
+# docker-compose up -d
+#
+# VIEW LOGS:
+# ----------
+# docker-compose logs -f [service-name]
+# Example: docker-compose logs -f app-1
+#
+# CHECK STATUS:
+# -------------
+# docker-compose ps
+#
+# STOP ALL SERVICES:
+# ------------------
+# docker-compose down
+#
+# STOP AND REMOVE VOLUMES (CAUTION: DELETES DATA):
+# -------------------------------------------------
+# docker-compose down -v
+#
+# REBUILD CONTAINERS:
+# -------------------
+# docker-compose up -d --build
+#
+# SCALE A SERVICE:
+# ----------------
+# docker-compose up -d --scale app=5
+# (Note: Requires updating NGINX upstream config)
+#
+# ACCESS POINTS:
+# --------------
+# - Application: http://localhost
+# - Grafana: http://localhost:3000 (admin/admin)
+# - Prometheus: http://localhost:9090
+# - Redis Commander: http://localhost:8081
+# - Kafka UI: http://localhost:8082
+#
+# ============================================================================
