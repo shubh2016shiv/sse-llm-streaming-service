@@ -373,7 +373,7 @@ class InfrastructureManager:
             return False
 
         # Check if Docker daemon is accessible
-        success, _ = self._run_command(["docker", "ps"], timeout=10)
+        success, _ = self._run_command(["docker", "ps"], timeout=30)
         if not success:
             self.logger.error("Docker daemon is not accessible. Ensure Docker is running.")
             return False
