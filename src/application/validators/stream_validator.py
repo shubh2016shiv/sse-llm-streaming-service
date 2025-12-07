@@ -124,6 +124,7 @@ class ModelValidator(BaseValidator):
     OPENAI_MODELS = {
         "gpt-3.5-turbo",
         "gpt-3.5-turbo-16k",
+        "gpt-3.5-turbo-0125",
         "gpt-4",
         "gpt-4-turbo",
         "gpt-4-turbo-preview",
@@ -136,6 +137,7 @@ class ModelValidator(BaseValidator):
         "claude-3-sonnet-20240229",
         "claude-3-haiku-20240307",
         "claude-3-5-sonnet-20240620",
+        "claude-3-5-sonnet-20241022",
         # Simplified names
         "claude-3-opus",
         "claude-3-sonnet",
