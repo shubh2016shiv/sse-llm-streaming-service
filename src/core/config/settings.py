@@ -222,6 +222,13 @@ class ApplicationSettings(BaseSettings):
     # API settings
     API_HOST: str = Field(default="0.0.0.0", description="API host")
     API_PORT: int = Field(default=8000, description="API port")
+    API_BASE_PATH: str = Field(
+        default="/api/v1",
+        description=(
+            "Base path for all API endpoints "
+            "(e.g., /api/v1, /api/v2, or empty string for root)"
+        )
+    )
 
     # CORS settings
     CORS_ORIGINS: list[str] = Field(default=["*"], description="Allowed CORS origins")
@@ -346,6 +353,13 @@ class Settings(BaseSettings):
     APP_VERSION: str = Field(default="1.0.0", description="Application version")
     API_HOST: str = Field(default="0.0.0.0", description="API host")
     API_PORT: int = Field(default=8000, description="API port")
+    API_BASE_PATH: str = Field(
+        default="/api/v1",
+        description=(
+            "Base path for all API endpoints "
+            "(e.g., /api/v1, /api/v2, or empty string for root)"
+        )
+    )
     CORS_ORIGINS: list[str] = Field(default=["*"], description="Allowed CORS origins")
 
     # EXPERIMENT SETTINGS
@@ -486,6 +500,7 @@ class Settings(BaseSettings):
             APP_VERSION=self.APP_VERSION,
             API_HOST=self.API_HOST,
             API_PORT=self.API_PORT,
+            API_BASE_PATH=self.API_BASE_PATH,
             CORS_ORIGINS=self.CORS_ORIGINS,
         )
 
