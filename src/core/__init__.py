@@ -20,11 +20,6 @@ from .exceptions import (
     StreamingError,
     ValidationError,
 )
-from .execution_tracker import (
-    ExecutionTracker,
-    StageExecution,
-    get_tracker,
-)
 from .logging import (
     clear_thread_id,
     get_logger,
@@ -32,6 +27,11 @@ from .logging import (
     log_stage,
     set_thread_id,
     setup_logging,
+)
+from .observability.execution_tracker import (
+    ExecutionTracker,
+    StageExecution,
+    get_tracker,
 )
 
 __all__ = [
