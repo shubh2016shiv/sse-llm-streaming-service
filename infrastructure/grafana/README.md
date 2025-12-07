@@ -488,3 +488,4 @@ This Grafana setup demonstrates:
 - [Prometheus Query Language (PromQL)](https://prometheus.io/docs/prometheus/latest/querying/basics/)
 - [RED Method for Monitoring](https://www.weave.works/blog/the-red-method-key-metrics-for-microservices-architecture/)
 - [Google SRE Book - Monitoring](https://sre.google/sre-book/monitoring-distributed-systems/)
+
