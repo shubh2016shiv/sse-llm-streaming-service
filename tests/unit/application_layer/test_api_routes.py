@@ -23,7 +23,7 @@ class TestHealthRoutes:
 
     def test_health_endpoint_returns_200(self, client):
         """Test health endpoint returns successful response."""
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
 
         assert response.status_code == 200
         data = response.json()
@@ -34,7 +34,7 @@ class TestHealthRoutes:
 
     def test_health_endpoint_includes_service_info(self, client):
         """Test health endpoint includes service information."""
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
 
         data = response.json()
 
@@ -46,7 +46,7 @@ class TestHealthRoutes:
         """Test health endpoint handles internal errors gracefully."""
         # This would require mocking dependencies to fail
         # For now, just ensure it returns a valid response
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
 
         assert response.status_code in [200, 503]  # Success or service unavailable
 
@@ -58,7 +58,7 @@ class TestHealthRoutes:
     async def test_health_detailed_endpoint(self, client):
         """Test detailed health endpoint if it exists."""
         # Try detailed health endpoint
-        response = client.get("/health/detailed")
+        response = client.get("/api/v1/health/detailed")
 
         # May or may not exist - both are acceptable
         if response.status_code == 200:
@@ -81,7 +81,7 @@ class TestStreamingRoutes:
     def test_stream_endpoint_exists(self, client):
         """Test stream endpoint accepts requests."""
         # This will likely fail due to missing dependencies, but should not 404
-        response = client.post("/stream")
+        response = client.post("/api/v1/stream")
 
         # Should not be 404 (not found)
         assert response.status_code != 404
@@ -95,7 +95,7 @@ class TestStreamingRoutes:
         """Test stream endpoint requires query parameter."""
         # Missing required query field
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "model": "gpt-3.5-turbo",
                 "provider": "openai",
@@ -111,7 +111,7 @@ class TestStreamingRoutes:
     def test_stream_endpoint_requires_model(self, client):
         """Test stream endpoint requires model parameter."""
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": "Test query",
                 "provider": "openai",
@@ -128,7 +128,7 @@ class TestStreamingRoutes:
         """Test stream endpoint validates request JSON format."""
         # Send invalid JSON
         response = client.post(
-            "/stream", data="invalid json", headers={"Content-Type": "application/json"}
+            "/api/v1/stream", data="invalid json", headers={"Content-Type": "application/json"}
         )
 
         assert response.status_code == 422
@@ -137,7 +137,7 @@ class TestStreamingRoutes:
     async def test_stream_endpoint_handles_cors(self, client):
         """Test stream endpoint handles CORS headers."""
         # Test OPTIONS request for CORS
-        response = client.options("/stream")
+        response = client.options("/api/v1/stream")
 
         # Should allow CORS or at least not fail
         assert response.status_code in [200, 404, 405]  # 405 is method not allowed
@@ -146,7 +146,7 @@ class TestStreamingRoutes:
         """Test stream endpoint accepts properly formatted requests."""
         # This will likely fail due to mocked dependencies, but validates request format
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": "What is AI?",
                 "model": "gpt-3.5-turbo",
@@ -169,7 +169,7 @@ class TestStreamingRoutes:
         # This test would require fully mocked dependencies
         # For now, just ensure the endpoint exists and accepts POST
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": "Test",
                 "model": "gpt-3.5-turbo",
@@ -229,7 +229,7 @@ class TestAPIMiddleware:
 
     def test_cors_middleware_enabled(self, client):
         """Test CORS middleware is configured."""
-        response = client.options("/health")
+        response = client.options("/api/v1/health")
 
         # Check CORS headers
         cors_headers = [
@@ -246,14 +246,14 @@ class TestAPIMiddleware:
         """Test request logging middleware is active."""
         # Make a request and check if logging occurred
         # This is hard to test directly, but we can ensure the request completes
-        response = client.get("/health")
+        response = client.get("/api/v1/health")
 
         assert response.status_code == 200
 
     def test_error_handling_middleware(self, client):
         """Test error handling middleware catches exceptions."""
         # Try to trigger an error
-        response = client.post("/stream", json={})  # Invalid request
+        response = client.post("/api/v1/stream", json={})  # Invalid request
 
         # Should return proper error response, not crash
         assert response.status_code in [422, 500]
@@ -276,7 +276,7 @@ class TestAPIValidation:
         long_query = "What is AI? " * 1000
 
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": long_query,
                 "model": "gpt-3.5-turbo",
@@ -295,7 +295,7 @@ class TestAPIValidation:
 
         for model in invalid_models:
             response = client.post(
-                "/stream",
+                "/api/v1/stream",
                 json={
                     "query": "Test query",
                     "model": model,
@@ -311,7 +311,7 @@ class TestAPIValidation:
     def test_provider_validation(self, client):
         """Test API validates provider names."""
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": "Test query",
                 "model": "gpt-3.5-turbo",
@@ -329,7 +329,7 @@ class TestAPIValidation:
         # thread_id is NOT part of StreamRequestModel - it's generated server-side
         # This test verifies that extra fields are ignored (Pydantic default behavior)
         response = client.post(
-            "/stream",
+            "/api/v1/stream",
             json={
                 "query": "Test query",
                 "model": "gpt-3.5-turbo",
@@ -342,6 +342,7 @@ class TestAPIValidation:
         # Should succeed - Pydantic ignores extra fields by default
         # The API generates thread_id server-side from headers or auto-generates it
         assert response.status_code == 200
+
 
 
 

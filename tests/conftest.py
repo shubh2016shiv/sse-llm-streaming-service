@@ -278,7 +278,7 @@ def mock_request_validator():
     """
     Mock RequestValidator for testing validation logic.
     """
-    from src.application.validators.stream_validator import RequestValidator
+    from src.application.validators import RequestValidator
 
     validator = MagicMock(spec=RequestValidator)
     validator.validate_query = MagicMock()

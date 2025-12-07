@@ -8,7 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
-from src.application.validators.stream_validator import RequestValidator
+from src.application.validators import RequestValidator
+from src.application.validators.exceptions import (
+    ModelValidationError,
+    QueryValidationError,
+    RateLimitValidationError,
+)
 
 
 @pytest.mark.unit
@@ -36,31 +41,32 @@ class TestRequestValidator:
 
     def test_validate_query_rejects_empty_query(self, validator):
         """Test validation rejects empty queries."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(QueryValidationError) as exc_info:
             validator.validate_query("")
 
         assert "empty" in str(exc_info.value).lower()
 
     def test_validate_query_rejects_whitespace_only(self, validator):
         """Test validation rejects whitespace-only queries."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(QueryValidationError) as exc_info:
             validator.validate_query("   ")
 
         assert "empty" in str(exc_info.value).lower()
 
     def test_validate_query_rejects_none_query(self, validator):
         """Test validation rejects None queries."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(QueryValidationError) as exc_info:
             validator.validate_query(None)
 
         assert "empty" in str(exc_info.value).lower()
 
     def test_validate_query_rejects_overly_long_queries(self, validator):
         """Test validation rejects extremely long queries."""
-        # Create a very long query
-        long_query = "What is AI? " * 1000  # Very long
+        # Create a very long query (> 100K characters)
+        # "What is AI? " is 13 characters, so 9000 * 13 = 117,000 characters
+        long_query = "What is AI? " * 9000  # ~117,000 characters
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(QueryValidationError) as exc_info:
             validator.validate_query(long_query)
 
         assert "long" in str(exc_info.value).lower() or "length" in str(exc_info.value).lower()
@@ -83,7 +89,7 @@ class TestRequestValidator:
 
     def test_validate_model_rejects_empty_model(self, validator):
         """Test validation rejects empty model names."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ModelValidationError) as exc_info:
             validator.validate_model("")
 
         assert "model" in str(exc_info.value).lower()
@@ -98,7 +104,7 @@ class TestRequestValidator:
         ]
 
         for model in invalid_models:
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(ModelValidationError) as exc_info:
                 validator.validate_model(model)
 
             assert "model" in str(exc_info.value).lower()
@@ -106,7 +112,8 @@ class TestRequestValidator:
     def test_check_connection_limit_accepts_under_limit(self, validator):
         """Test connection limit check accepts connections under limit."""
         # Mock settings with reasonable limit
-        with patch.object(validator, "settings") as mock_settings:
+        with patch("src.core.config.settings.get_settings") as mock_get_settings:
+            mock_settings = mock_get_settings.return_value
             mock_settings.app.MAX_CONNECTIONS = 10
 
             # Should not raise for reasonable numbers
@@ -115,10 +122,11 @@ class TestRequestValidator:
 
     def test_check_connection_limit_rejects_over_limit(self, validator):
         """Test connection limit check rejects connections over limit."""
-        with patch.object(validator, "settings") as mock_settings:
+        with patch("src.core.config.settings.get_settings") as mock_get_settings:
+            mock_settings = mock_get_settings.return_value
             mock_settings.app.MAX_CONNECTIONS = 10
 
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(RateLimitValidationError) as exc_info:
                 validator.check_connection_limit(15)
 
             assert (
@@ -128,10 +136,11 @@ class TestRequestValidator:
 
     def test_check_connection_limit_handles_zero_limit(self, validator):
         """Test connection limit check with zero limit."""
-        with patch.object(validator, "settings") as mock_settings:
+        with patch("src.core.config.settings.get_settings") as mock_get_settings:
+            mock_settings = mock_get_settings.return_value
             mock_settings.app.MAX_CONNECTIONS = 0
 
-            with pytest.raises(Exception):
+            with pytest.raises(RateLimitValidationError):
                 validator.check_connection_limit(1)
 
     def test_validate_query_handles_unicode_characters(self, validator):
@@ -158,7 +167,7 @@ class TestRequestValidator:
         ]
 
         for query in malicious_queries:
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(QueryValidationError) as exc_info:
                 validator.validate_query(query)
 
             assert (
@@ -174,13 +183,14 @@ class TestRequestValidator:
             # Should accept versioned models (may not validate strictly)
             try:
                 validator.validate_model(model)
-            except ValueError:
+            except ModelValidationError:
                 # It's OK if strict validation rejects these
                 pass
 
     def test_connection_limit_check_is_idempotent(self, validator):
         """Test connection limit check doesn't modify state."""
-        with patch.object(validator, "settings") as mock_settings:
+        with patch("src.core.config.settings.get_settings") as mock_get_settings:
+            mock_settings = mock_get_settings.return_value
             mock_settings.app.MAX_CONNECTIONS = 10
 
             # Multiple calls should behave consistently
@@ -189,13 +199,14 @@ class TestRequestValidator:
 
     def test_validator_handles_extreme_connection_counts(self, validator):
         """Test validator handles extreme connection counts."""
-        with patch.object(validator, "settings") as mock_settings:
+        with patch("src.core.config.settings.get_settings") as mock_get_settings:
+            mock_settings = mock_get_settings.return_value
             mock_settings.app.MAX_CONNECTIONS = 1000
 
             # Should handle large numbers
             validator.check_connection_limit(999)
 
-            with pytest.raises(Exception):
+            with pytest.raises(RateLimitValidationError):
                 validator.check_connection_limit(1001)
 
     def test_validate_query_normalizes_whitespace(self, validator):
@@ -211,6 +222,7 @@ class TestRequestValidator:
             except ValueError:
                 # If it rejects, it should be for content reasons, not just whitespace
                 pass
+
 
 
 
