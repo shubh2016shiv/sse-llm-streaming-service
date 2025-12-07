@@ -383,6 +383,9 @@ class Settings(BaseSettings):
     )
 
     # Kafka-specific settings
+    KAFKA_BOOTSTRAP_SERVERS: str = Field(
+        default="localhost:9092", description="Kafka bootstrap servers"
+    )
     KAFKA_BUFFER_MEMORY: int = Field(
         default=33554432, description="Kafka producer buffer memory in bytes (32MB)"
     )
