@@ -1,0 +1,109 @@
+# Grafana Data Source Provisioning
+# =================================
+# This file automatically configures Prometheus as a data source in Grafana.
+#
+# WHY PROVISIONING?
+# -----------------
+# - Automates data source configuration (no manual setup)
+# - Version controlled (infrastructure as code)
+# - Consistent across environments
+# - Enables GitOps workflows
+#
+# MANUAL ALTERNATIVE:
+# -------------------
+# Without provisioning, you'd need to:
+# 1. Open Grafana UI
+# 2. Go to Configuration → Data Sources
+# 3. Click "Add data source"
+# 4. Select Prometheus
+# 5. Enter URL and settings
+# 6. Click "Save & Test"
+#
+# With provisioning, this happens automatically on Grafana startup!
+
+apiVersion: 1
+
+# DELETE EXISTING DATA SOURCES
+# -----------------------------
+# If true, Grafana deletes data sources not defined in provisioning files.
+# Set to false to preserve manually added data sources.
+deleteDatasources:
+  - name: Prometheus
+    orgId: 1
+
+# DATA SOURCE DEFINITIONS
+# -----------------------
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    
+    # UNIQUE IDENTIFIER
+    # -----------------
+    # This UID allows dashboards to reliably reference this datasource.
+    # Dashboards use "uid": "prometheus" in their panel queries.
+    # Without this explicit UID, Grafana auto-generates one, causing dashboard errors.
+    uid: prometheus
+    
+    # URL CONFIGURATION
+    # -----------------
+    # DOCKER COMPOSE:
+    # Use service name (prometheus) - Docker DNS resolves to container IP
+    # Port 9090 is Prometheus default
+    #
+    # KUBERNETES:
+    # Use service FQDN: prometheus.monitoring.svc.cluster.local:9090
+    #
+    # EXTERNAL:
+    # Use full URL: https://prometheus.example.com
+    
+    url: http://prometheus:9090
+    
+    # BASIC AUTH
+    # ----------
+    # Prometheus doesn't require auth by default
+    # Enable if you've configured Prometheus with authentication
+    
+    basicAuth: false
+    # basicAuthUser: admin
+    # basicAuthPassword: secret
+    
+    # JSON DATA (ADVANCED SETTINGS)
+    # ------------------------------
+    jsonData:
+      # HTTP METHOD
+      # -----------
+      # POST is recommended for complex queries (avoids URL length limits)
+      httpMethod: POST
+      
+      # QUERY TIMEOUT
+      # -------------
+      # Maximum time to wait for query response
+      # Increase for complex queries over large time ranges
+      timeInterval: 15s
+      
+      # CUSTOM QUERY PARAMETERS
+      # -----------------------
+      # Add custom parameters to all Prometheus queries
+      # customQueryParameters: 'step=15s'
+    
+    # DEFAULT DATA SOURCE
+    # -------------------
+    # If true, this is the default data source for new dashboards
+    isDefault: true
+    
+    # VERSION
+    # -------
+    # Provisioning version (always 1)
+    version: 1
+    
+    # EDITABLE
+    # --------
+    # If false, users cannot edit this data source in UI
+    # Set to false in production to prevent accidental changes
+    editable: true
+    
+    # ORGANIZATION ID
+    # ---------------
+    # Grafana organization ID (1 is default)
+    orgId: 1

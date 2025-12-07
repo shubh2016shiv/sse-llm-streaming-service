@@ -1,0 +1,1016 @@
+{
+    "annotations": {
+        "list": [
+            {
+                "builtIn": 1,
+                "datasource": {
+                    "type": "grafana",
+                    "uid": "-- Grafana --"
+                },
+                "enable": true,
+                "hide": true,
+                "iconColor": "rgba(0, 211, 255, 1)",
+                "name": "Annotations & Alerts",
+                "type": "dashboard"
+            },
+            {
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "prometheus"
+                },
+                "enable": true,
+                "expr": "changes(sse_app_info[5m]) > 0",
+                "iconColor": "green",
+                "name": "Deployments",
+                "tagKeys": "version",
+                "textFormat": "Deployment: {{version}}",
+                "titleFormat": "App Deployment"
+            }
+        ]
+    },
+    "description": "# SSE Streaming Application - Overview Dashboard\n\n## Purpose\nHigh-level monitoring of the SSE streaming application, focusing on the **RED method** (Rate, Errors, Duration) and **Golden Signals** (Latency, Traffic, Errors, Saturation).\n\n## Design Decisions\n\n### 1. RED Method Implementation\n**Decision**: Organize dashboard around Rate, Errors, Duration\n**Rationale**: Industry-standard approach for request-driven services\n**Mechanism**: \n- Rate: `rate(sse_requests_total[5m])`\n- Errors: `rate(sse_requests_total{status!=\"success\"}[5m])`\n- Duration: `histogram_quantile(0.95, rate(sse_request_duration_seconds_bucket[5m]))`\n\n### 2. 5-Minute Rate Windows\n**Decision**: Use 5-minute windows for rate calculations\n**Rationale**: Balances responsiveness with noise reduction\n**Mechanism**: `[5m]` range selector in PromQL queries\n\n### 3. Percentile-Based Latency\n**Decision**: Display P50, P95, P99 instead of average\n**Rationale**: Percentiles reveal tail latency that averages hide\n**Mechanism**: `histogram_quantile()` function on histogram buckets\n\n### 4. Instance-Level Breakdown\n**Decision**: Show per-instance metrics with aggregation\n**Rationale**: Detect imbalanced load distribution or instance-specific issues\n**Mechanism**: `by (instance)` grouping in PromQL\n\n### 5. Auto-Refresh\n**Decision**: 10-second refresh interval\n**Rationale**: Near real-time monitoring without overwhelming Prometheus\n**Implementation**: Dashboard refresh setting",
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 1,
+    "id": null,
+    "links": [
+        {
+            "asDropdown": false,
+            "icon": "external link",
+            "includeVars": true,
+            "keepTime": true,
+            "tags": [],
+            "targetBlank": true,
+            "title": "SSE Detailed Dashboard",
+            "tooltip": "Deep-dive debugging view",
+            "type": "link",
+            "url": "/d/sse-detailed/sse-streaming-detailed"
+        },
+        {
+            "asDropdown": false,
+            "icon": "doc",
+            "includeVars": false,
+            "keepTime": false,
+            "tags": [],
+            "targetBlank": true,
+            "title": "Architecture Documentation",
+            "tooltip": "System architecture and design decisions",
+            "type": "link",
+            "url": "https://github.com/your-org/sse-app/blob/main/docs/infrastructure/ENTERPRISE_ARCHITECTURE.md"
+        }
+    ],
+    "liveNow": false,
+    "panels": [
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Total Request Count\n\n**What**: Total number of requests received across all instances\n\n**Design Decision**: Use counter metric instead of gauge\n**Rationale**: Counters never decrease, providing accurate totals even after restarts\n**Mechanism**: `sse_requests_total` is a Prometheus Counter that increments on each request\n\n**Query Explanation**:\n```promql\nsum(sse_requests_total)\n```\n- `sse_requests_total`: Counter metric (increments only)\n- `sum()`: Aggregate across all instances and labels\n- Result: Total requests since application start\n\n**Why This Matters**: Provides context for other metrics (e.g., error rate as percentage of total)",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 0
+            },
+            "id": 1,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(sse_requests_total)",
+                    "refId": "A"
+                }
+            ],
+            "title": "Total Requests",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Request Rate (Requests per Second)\n\n**What**: Current request throughput across all instances\n\n**Design Decision**: Use `rate()` with 5-minute window\n**Rationale**: \n- `rate()` calculates per-second average over time range\n- 5 minutes balances responsiveness with smoothing\n- Shorter windows (1m) are too noisy\n- Longer windows (15m) hide sudden changes\n\n**Query Explanation**:\n```promql\nsum(rate(sse_requests_total[5m]))\n```\n- `rate(sse_requests_total[5m])`: Per-second rate over last 5 minutes\n- `sum()`: Aggregate across all instances\n- Result: Total requests/second across cluster\n\n**Mechanism**: \n1. Prometheus samples counter every 15s (scrape interval)\n2. `rate()` calculates: (current_value - value_5m_ago) / 300 seconds\n3. Automatically handles counter resets (e.g., app restart)\n\n**Threshold Design**:\n- Green (0-50 req/s): Normal load\n- Yellow (50-100 req/s): Elevated load\n- Red (>100 req/s): High load, consider scaling",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 50
+                            },
+                            {
+                                "color": "red",
+                                "value": 100
+                            }
+                        ]
+                    },
+                    "unit": "reqps"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 6,
+                "y": 0
+            },
+            "id": 2,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_requests_total[5m]))",
+                    "refId": "A"
+                }
+            ],
+            "title": "Request Rate",
+            "type": "stat"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Success Rate Percentage\n\n**What**: Percentage of successful requests (status=success)\n\n**Design Decision**: Calculate success rate, not error rate\n**Rationale**: \n- Positive framing (success vs failure)\n- Easier to spot degradation (number going down)\n- Industry standard (Google SRE book)\n\n**Query Explanation**:\n```promql\n(\n  sum(rate(sse_requests_total{status=\"success\"}[5m]))\n  /\n  sum(rate(sse_requests_total[5m]))\n) * 100\n```\n\n**Mechanism**:\n1. Numerator: Successful requests per second\n2. Denominator: Total requests per second\n3. Division: Success rate (0.0 to 1.0)\n4. Multiply by 100: Convert to percentage\n\n**Why This Works**:\n- `rate()` handles counter resets\n- Division cancels out time component\n- Result is dimensionless ratio\n\n**Threshold Design**:\n- Red (<95%): Critical, immediate action\n- Yellow (95-99%): Warning, investigate\n- Green (>99%): Healthy\n\n**SLA Context**: \n- 99% = 7.2 hours downtime/month\n- 99.9% = 43 minutes downtime/month\n- 99.99% = 4.3 minutes downtime/month",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 95
+                            },
+                            {
+                                "color": "green",
+                                "value": 99
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 12,
+                "y": 0
+            },
+            "id": 3,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "(sum(rate(sse_requests_total{status=\"success\"}[5m])) / sum(rate(sse_requests_total[5m]))) * 100",
+                    "refId": "A"
+                }
+            ],
+            "title": "Success Rate",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Active SSE Connections\n\n**What**: Current number of active streaming connections\n\n**Design Decision**: Use gauge metric, not counter\n**Rationale**: \n- Connections can increase AND decrease\n- Gauge represents current state\n- Counter would only track total connections ever made\n\n**Query Explanation**:\n```promql\nsum(sse_active_connections)\n```\n- `sse_active_connections`: Gauge metric (can go up or down)\n- `sum()`: Total across all instances\n\n**Mechanism**:\n1. Application increments gauge when connection opens\n2. Application decrements gauge when connection closes\n3. Prometheus scrapes current value every 15s\n4. Grafana displays latest value\n\n**Why This Matters**:\n- Indicates current load (active users)\n- Helps with capacity planning\n- Detects connection leaks (always increasing)\n\n**Threshold Design**:\n- Green (0-300): Normal\n- Yellow (300-450): Elevated\n- Red (>450): Approaching capacity (500 per instance × 3 instances = 1500 max)",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 300
+                            },
+                            {
+                                "color": "red",
+                                "value": 450
+                            }
+                        ]
+                    },
+                    "unit": "short"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 18,
+                "y": 0
+            },
+            "id": 4,
+            "options": {
+                "colorMode": "value",
+                "graphMode": "area",
+                "justifyMode": "auto",
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "textMode": "auto"
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(sse_active_connections)",
+                    "refId": "A"
+                }
+            ],
+            "title": "Active Connections",
+            "type": "stat"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 4
+            },
+            "id": 100,
+            "panels": [],
+            "title": "Request Metrics (RED Method: Rate, Errors, Duration)",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Request Rate by Instance\n\n**Design Decision**: Show per-instance breakdown with stacked area chart\n**Rationale**:\n- Detect load imbalance across instances\n- Verify load balancer is distributing evenly\n- Identify if specific instance is struggling\n\n**Query Explanation**:\n```promql\nsum(rate(sse_requests_total[5m])) by (instance)\n```\n- `by (instance)`: Group by instance label\n- Creates separate time series for each instance\n- Result: One line per instance showing its request rate\n\n**Expected Behavior**:\n- **Balanced Load**: All lines roughly equal (least_conn working)\n- **Imbalanced Load**: One line much higher (investigate)\n- **Missing Line**: Instance down or not receiving traffic\n\n**Mechanism (Load Balancer)**:\n1. NGINX uses least_conn algorithm\n2. Tracks active connections per instance\n3. Routes new request to instance with fewest connections\n4. For SSE (long-lived connections), this prevents imbalance\n\n**Troubleshooting**:\n- If imbalanced: Check NGINX upstream config\n- If missing instance: Check health checks\n- If all zero: Check NGINX is routing traffic",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 20,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "tooltip": false,
+                            "viz": false,
+                            "legend": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "normal"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "reqps"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 5
+            },
+            "id": 5,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_requests_total[5m])) by (instance)",
+                    "legendFormat": "{{instance}}",
+                    "refId": "A"
+                }
+            ],
+            "title": "Request Rate by Instance",
+            "type": "timeseries"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Error Rate Over Time\n\n**Design Decision**: Separate success and error lines\n**Rationale**: \n- Visualize error spikes clearly\n- Compare error rate to total rate\n- Identify error patterns (time-based, periodic)\n\n**Query Explanation**:\n```promql\n# Success rate\nsum(rate(sse_requests_total{status=\"success\"}[5m]))\n\n# Error rate  \nsum(rate(sse_requests_total{status!=\"success\"}[5m]))\n```\n\n**Status Label Values**:\n- `success`: Request completed successfully\n- `error`: Application error (500)\n- `rate_limited`: Rate limit exceeded (429)\n- `validation_error`: Invalid request (400)\n- `provider_error`: LLM provider failed\n\n**Mechanism (Error Tracking)**:\n1. Application sets status label on each request\n2. Increments `sse_requests_total{status=\"error\"}`\n3. Prometheus scrapes counter\n4. `rate()` calculates errors per second\n\n**Alert Correlation**:\n- This graph triggers `HighErrorRate` alert\n- Alert fires when error rate > 5% for 2 minutes\n- See Prometheus alerts for current status",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "tooltip": false,
+                            "viz": false,
+                            "legend": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "reqps"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Errors"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "red",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Success"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "green",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 5
+            },
+            "id": 6,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_requests_total{status=\"success\"}[5m]))",
+                    "legendFormat": "Success",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_requests_total{status!=\"success\"}[5m]))",
+                    "legendFormat": "Errors",
+                    "refId": "B"
+                }
+            ],
+            "title": "Success vs Error Rate",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 13
+            },
+            "id": 101,
+            "panels": [],
+            "title": "Latency Metrics (Percentiles)",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Request Latency Percentiles\n\n**Design Decision**: Display P50, P95, P99 instead of average\n**Rationale**:\n- **Average hides outliers**: One slow request doesn't affect average much\n- **Percentiles reveal tail latency**: P99 shows worst 1% of user experience\n- **SLA alignment**: Most SLAs are percentile-based (\"P95 < 2s\")\n\n**Query Explanation**:\n```promql\nhistogram_quantile(0.50,\n  sum(rate(sse_request_duration_seconds_bucket[5m])) by (le)\n)\n```\n\n**Mechanism (Histogram Quantiles)**:\n1. Application records request duration in histogram buckets:\n   - Bucket 1: 0-0.1s\n   - Bucket 2: 0.1-0.5s\n   - Bucket 3: 0.5-1s\n   - Bucket 4: 1-2s\n   - Bucket 5: 2-5s\n   - Bucket 6: 5-10s\n   - Bucket 7: 10s+\n\n2. Each bucket is a counter (cumulative)\n3. `rate()` calculates samples per second in each bucket\n4. `histogram_quantile()` interpolates to find exact percentile\n\n**Percentile Interpretation**:\n- **P50 (Median)**: 50% of requests faster, 50% slower\n- **P95**: 95% of requests faster, 5% slower (typical SLA)\n- **P99**: 99% of requests faster, 1% slower (tail latency)\n\n**Why This Matters**:\n- P50 = 500ms, P99 = 5s means most users happy, but 1% frustrated\n- Average would show ~600ms, hiding the problem\n\n**Threshold Design**:\n- P50 < 500ms: Excellent (cache hit)\n- P95 < 2s: Good (cache miss + LLM call)\n- P99 < 5s: Acceptable (slow LLM response)\n\n**Alert Correlation**:\n- `HighP95Latency` alert fires if P95 > 2s\n- `HighP99Latency` alert fires if P99 > 5s",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 10,
+                        "gradientMode": "opacity",
+                        "hideFrom": {
+                            "tooltip": false,
+                            "viz": false,
+                            "legend": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 2,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "none"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "line"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 2
+                            },
+                            {
+                                "color": "red",
+                                "value": 5
+                            }
+                        ]
+                    },
+                    "unit": "s"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "P50"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "green",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "P95"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "yellow",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "P99"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "red",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 14
+            },
+            "id": 7,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "none"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "histogram_quantile(0.50, sum(rate(sse_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "P50",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "histogram_quantile(0.95, sum(rate(sse_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "P95",
+                    "refId": "B"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "histogram_quantile(0.99, sum(rate(sse_request_duration_seconds_bucket[5m])) by (le))",
+                    "legendFormat": "P99",
+                    "refId": "C"
+                }
+            ],
+            "title": "Request Latency Percentiles (P50, P95, P99)",
+            "type": "timeseries"
+        },
+        {
+            "collapsed": false,
+            "gridPos": {
+                "h": 1,
+                "w": 24,
+                "x": 0,
+                "y": 22
+            },
+            "id": 102,
+            "panels": [],
+            "title": "Cache Performance",
+            "type": "row"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Cache Hit Rate\n\n**Design Decision**: Track L1 (in-memory) and L2 (Redis) separately\n**Rationale**:\n- Different performance characteristics\n- L1 hits are ~1ms, L2 hits are ~5ms\n- Helps optimize cache strategy\n\n**Query Explanation**:\n```promql\n(\n  sum(rate(sse_cache_hits_total{tier=\"L2\"}[5m]))\n  /\n  (\n    sum(rate(sse_cache_hits_total{tier=\"L2\"}[5m]))\n    +\n    sum(rate(sse_cache_misses_total{tier=\"L2\"}[5m]))\n  )\n) * 100\n```\n\n**Mechanism (Multi-Tier Caching)**:\n1. **Request arrives**\n2. **Check L1 cache** (in-memory)\n   - Hit: Return immediately (~1ms)\n   - Miss: Continue to L2\n3. **Check L2 cache** (Redis)\n   - Hit: Return from Redis (~5ms), populate L1\n   - Miss: Call LLM (~1-3s), populate L1 and L2\n\n**Why Two Tiers?**:\n- L1: Fast but limited (per-instance, lost on restart)\n- L2: Slower but shared (across instances, persistent)\n- Combined: Best of both worlds\n\n**Expected Hit Rates**:\n- L1: 60-70% (frequently accessed queries)\n- L2: 85-95% (includes L1 misses that hit L2)\n- Combined: 95%+ (only 5% require LLM call)\n\n**Impact on Cost**:\n- Cache hit: $0 (no LLM call)\n- Cache miss: $0.01-0.10 per request (LLM API cost)\n- 95% hit rate saves 95% of LLM costs!\n\n**Threshold Design**:\n- Red (<50%): Critical, investigate cache TTL or query patterns\n- Yellow (50-80%): Suboptimal, room for improvement\n- Green (>80%): Healthy\n\n**Alert Correlation**:\n- `LowCacheHitRate` alert fires if L2 < 50% for 10 minutes",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "thresholds"
+                    },
+                    "mappings": [],
+                    "max": 100,
+                    "min": 0,
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "red",
+                                "value": null
+                            },
+                            {
+                                "color": "yellow",
+                                "value": 50
+                            },
+                            {
+                                "color": "green",
+                                "value": 80
+                            }
+                        ]
+                    },
+                    "unit": "percent"
+                },
+                "overrides": []
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 23
+            },
+            "id": 8,
+            "options": {
+                "orientation": "auto",
+                "reduceOptions": {
+                    "calcs": [
+                        "lastNotNull"
+                    ],
+                    "fields": "",
+                    "values": false
+                },
+                "showThresholdLabels": false,
+                "showThresholdMarkers": true
+            },
+            "pluginVersion": "10.2.2",
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "(sum(rate(sse_cache_hits_total{tier=\"L1\"}[5m])) / (sum(rate(sse_cache_hits_total{tier=\"L1\"}[5m])) + sum(rate(sse_cache_misses_total{tier=\"L1\"}[5m])))) * 100",
+                    "legendFormat": "L1 Hit Rate",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "(sum(rate(sse_cache_hits_total{tier=\"L2\"}[5m])) / (sum(rate(sse_cache_hits_total{tier=\"L2\"}[5m])) + sum(rate(sse_cache_misses_total{tier=\"L2\"}[5m])))) * 100",
+                    "legendFormat": "L2 Hit Rate",
+                    "refId": "B"
+                }
+            ],
+            "title": "Cache Hit Rate (L1 vs L2)",
+            "type": "gauge"
+        },
+        {
+            "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+            },
+            "description": "## Cache Operations Over Time\n\n**Design Decision**: Stacked area chart for hits vs misses\n**Rationale**: \n- Visualize total cache load (height of stack)\n- See proportion of hits vs misses (area ratio)\n- Identify patterns (time-based, traffic-correlated)\n\n**Mechanism (Cache Key Generation)**:\n```python\n# Application generates cache key from:\nkey = f\"sse:response:{hash(query + model + parameters)}\"\n```\n\n**Cache TTL Strategy**:\n- Response cache: 1 hour (3600s)\n  - Rationale: LLM responses don't change frequently\n  - Balance: Fresh enough, long enough to be useful\n- Session cache: 24 hours (86400s)\n  - Rationale: User context persists across day\n\n**Cache Invalidation**:\n- Time-based: Automatic expiry after TTL\n- Manual: Admin endpoint to clear cache\n- Pattern-based: Clear all keys matching pattern\n\n**Why This Graph Matters**:\n- Sudden drop in hits: Cache cleared or TTL too short\n- Increase in misses: New query patterns or traffic spike\n- Flat line: No traffic or cache not working",
+            "fieldConfig": {
+                "defaults": {
+                    "color": {
+                        "mode": "palette-classic"
+                    },
+                    "custom": {
+                        "axisCenteredZero": false,
+                        "axisColorMode": "text",
+                        "axisLabel": "",
+                        "axisPlacement": "auto",
+                        "barAlignment": 0,
+                        "drawStyle": "line",
+                        "fillOpacity": 30,
+                        "gradientMode": "none",
+                        "hideFrom": {
+                            "tooltip": false,
+                            "viz": false,
+                            "legend": false
+                        },
+                        "lineInterpolation": "smooth",
+                        "lineWidth": 1,
+                        "pointSize": 5,
+                        "scaleDistribution": {
+                            "type": "linear"
+                        },
+                        "showPoints": "never",
+                        "spanNulls": false,
+                        "stacking": {
+                            "group": "A",
+                            "mode": "normal"
+                        },
+                        "thresholdsStyle": {
+                            "mode": "off"
+                        }
+                    },
+                    "mappings": [],
+                    "thresholds": {
+                        "mode": "absolute",
+                        "steps": [
+                            {
+                                "color": "green",
+                                "value": null
+                            }
+                        ]
+                    },
+                    "unit": "ops"
+                },
+                "overrides": [
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Cache Hits"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "green",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "matcher": {
+                            "id": "byName",
+                            "options": "Cache Misses"
+                        },
+                        "properties": [
+                            {
+                                "id": "color",
+                                "value": {
+                                    "fixedColor": "orange",
+                                    "mode": "fixed"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "gridPos": {
+                "h": 8,
+                "w": 16,
+                "x": 8,
+                "y": 23
+            },
+            "id": 9,
+            "options": {
+                "legend": {
+                    "calcs": [
+                        "mean",
+                        "lastNotNull",
+                        "max"
+                    ],
+                    "displayMode": "table",
+                    "placement": "bottom",
+                    "showLegend": true
+                },
+                "tooltip": {
+                    "mode": "multi",
+                    "sort": "desc"
+                }
+            },
+            "targets": [
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_cache_hits_total[5m]))",
+                    "legendFormat": "Cache Hits",
+                    "refId": "A"
+                },
+                {
+                    "datasource": {
+                        "type": "prometheus",
+                        "uid": "prometheus"
+                    },
+                    "expr": "sum(rate(sse_cache_misses_total[5m]))",
+                    "legendFormat": "Cache Misses",
+                    "refId": "B"
+                }
+            ],
+            "title": "Cache Operations (Hits vs Misses)",
+            "type": "timeseries"
+        }
+    ],
+    "refresh": "10s",
+    "schemaVersion": 38,
+    "style": "dark",
+    "tags": [
+        "sse",
+        "streaming",
+        "llm",
+        "overview"
+    ],
+    "templating": {
+        "list": [
+            {
+                "current": {
+                    "selected": false,
+                    "text": "All",
+                    "value": "$__all"
+                },
+                "datasource": {
+                    "type": "prometheus",
+                    "uid": "prometheus"
+                },
+                "definition": "label_values(sse_requests_total, instance)",
+                "hide": 0,
+                "includeAll": true,
+                "label": "Instance",
+                "multi": true,
+                "name": "instance",
+                "options": [],
+                "query": {
+                    "query": "label_values(sse_requests_total, instance)",
+                    "refId": "PrometheusVariableQueryEditor-VariableQuery"
+                },
+                "refresh": 1,
+                "regex": "",
+                "skipUrlSync": false,
+                "sort": 1,
+                "type": "query"
+            }
+        ]
+    },
+    "time": {
+        "from": "now-1h",
+        "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "",
+    "title": "SSE Streaming - Overview",
+    "uid": "sse-overview",
+    "version": 1,
+    "weekStart": ""
+}

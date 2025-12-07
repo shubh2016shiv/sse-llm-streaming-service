@@ -1,0 +1,53 @@
+# Grafana Dashboard Provisioning Configuration
+# ==============================================
+# This file tells Grafana where to find dashboard JSON files and how to load them.
+#
+# HOW IT WORKS:
+# -------------
+# 1. Grafana reads this file on startup (and every updateIntervalSeconds)
+# 2. It looks at the 'path' specified below
+# 3. It loads all .json files from that path as dashboards
+# 4. Dashboards appear in the folder specified by 'folder'
+
+apiVersion: 1
+
+providers:
+  - name: 'SSE Dashboards'
+    orgId: 1
+    
+    # FOLDER IN GRAFANA UI
+    # --------------------
+    # Dashboards will appear under: Dashboards → SSE Streaming
+    folder: 'SSE Streaming'
+    
+    type: file
+    disableDeletion: false
+    
+    # UPDATE INTERVAL
+    # ---------------
+    # Check for new/updated dashboards every 10 seconds
+    # Set to 0 to disable auto-reload (requires Grafana restart)
+    updateIntervalSeconds: 10
+    
+    # UI UPDATES
+    # ----------
+    # Allow editing dashboards in Grafana UI
+    # Changes made in UI won't persist (file is source of truth)
+    allowUiUpdates: true
+    
+    options:
+      # DASHBOARD PATH (CONTAINER)
+      # --------------------------
+      # This is the path INSIDE the Grafana container.
+      # 
+      # Docker Compose volume mapping:
+      #   ./infrastructure/grafana/dashboards → /etc/grafana/dashboards
+      #
+      # So dashboard files in ./dashboards/ appear at this container path.
+      path: /etc/grafana/dashboards
+      
+      # FOLDER STRUCTURE
+      # ----------------
+      # If true, subdirectories in 'path' become folders in Grafana UI
+      # Example: dashboards/production/*.json → "production" folder
+      foldersFromFilesStructure: true
