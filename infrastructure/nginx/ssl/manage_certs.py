@@ -103,11 +103,9 @@ def post_validate():
     try:
         with open(KEY_FILE) as f:
             key_content = f.read()
-            has_private_key = (
-                "-----BEGIN PRIVATE KEY-----" in key_content
-                or "-----BEGIN RSA PRIVATE KEY-----" in key_content
-            )
-            if not has_private_key:
+            has_private_key = "-----BEGIN PRIVATE KEY-----" in key_content
+            has_rsa_key = "-----BEGIN RSA PRIVATE KEY-----" in key_content
+            if not has_private_key and not has_rsa_key:
                 print_error("Key file does not look like a PEM private key")
                 return False
 
@@ -124,15 +122,16 @@ def post_validate():
     # 4. Optional: Deep validation using Docker/OpenSSL (re-using the logic from before)
     print_step("Post-Validation: Deep inspection via Docker...")
     try:
+        openssl_cmd = (
+            "apk add --no-cache openssl > /dev/null 2>&1 && "
+            "openssl x509 -in /work/localhost.crt -noout -subject -dates"
+        )
         cmd = [
             "docker", "run", "--rm",
             "-v", f"{SSL_DIR}:/work",
             "alpine:3",
             "sh", "-c",
-            (
-                "apk add --no-cache openssl > /dev/null 2>&1 && "
-                "openssl x509 -in /work/localhost.crt -noout -subject -dates"
-            )
+            openssl_cmd
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
