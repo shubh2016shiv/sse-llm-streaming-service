@@ -49,11 +49,11 @@ services:
   # - Low resource usage
   # - Battle-tested in production
   # - Excellent SSE streaming support
-  
+
   nginx:
     image: nginx:1.25-alpine
     container_name: sse-nginx
-    
+
     # PORT MAPPING
     # ------------
     # 80:80 - HTTP traffic (redirects to HTTPS)
@@ -61,7 +61,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    
+
     # VOLUME MOUNTS
     # -------------
     # Mount custom NGINX configuration and SSL certificates
@@ -69,27 +69,27 @@ services:
       - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infrastructure/nginx/conf.d:/etc/nginx/conf.d:ro
       - ./infrastructure/nginx/ssl:/etc/nginx/ssl:ro
-    
+
     # DEPENDENCIES
     # ------------
     # Wait for at least one app instance to be healthy before starting
     depends_on:
       app-1:
         condition: service_healthy
-    
+
     # HEALTH CHECK
     # ------------
     # Verify NGINX is responding
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/nginx-health" ]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 10s
-    
+
     networks:
       - sse-network
-    
+
     restart: unless-stopped
 
   # ==========================================================================
@@ -107,14 +107,14 @@ services:
   # To add more instances, duplicate the app-1 configuration
   # and update the instance number (app-4, app-5, etc.)
   # Don't forget to add them to nginx upstream configuration!
-  
+
   # Instance 1
   app-1:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: sse-app-1
-    hostname: app-1  # Used by NGINX upstream
+    hostname: app-1 # Used by NGINX upstream
     env_file:
       - .env
     environment:
@@ -133,7 +133,7 @@ services:
       - CACHE_SESSION_TTL=86400
       - QUEUE_TYPE=redis
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-    
+
     # EXPOSE (NOT PUBLISH)
     # --------------------
     # expose makes port available to other containers
@@ -141,27 +141,27 @@ services:
     # NGINX accesses via internal network
     expose:
       - "8000"
-    
+
     volumes:
       - ./src:/app/src
       - ./logs:/app/logs
-    
+
     depends_on:
       redis-master:
         condition: service_healthy
-    
+
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 30s
-    
+
     networks:
       - sse-network
-    
+
     restart: unless-stopped
-    
+
     command: uvicorn src.application.app:app --host 0.0.0.0 --port 8000 --reload
 
   # Instance 2
@@ -198,7 +198,7 @@ services:
       redis-master:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -242,7 +242,7 @@ services:
       redis-master:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: [ "CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')" ]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -266,47 +266,47 @@ services:
   # ---------------
   # Default: 15 days (configurable via --storage.tsdb.retention.time)
   # Adjust based on your needs and available storage
-  
+
   prometheus:
     image: prom/prometheus:v2.48.0
     container_name: sse-prometheus
-    
+
     # COMMAND-LINE FLAGS
     # ------------------
     # Configure Prometheus behavior
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=15d'  # Keep 15 days of data
+      - '--storage.tsdb.retention.time=15d' # Keep 15 days of data
       - '--web.console.libraries=/usr/share/prometheus/console_libraries'
       - '--web.console.templates=/usr/share/prometheus/consoles'
-      - '--web.enable-lifecycle'  # Allow config reload via API
-    
+      - '--web.enable-lifecycle' # Allow config reload via API
+
     ports:
       - "9090:9090"
-    
+
     volumes:
       # Configuration files
       - ./infrastructure/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infrastructure/prometheus/alerts:/etc/prometheus/alerts:ro
-      
+
       # Data storage (persistent)
       - prometheus-data:/prometheus
-    
+
     depends_on:
       - app-1
       - app-2
       - app-3
-    
+
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy" ]
       interval: 10s
       timeout: 5s
       retries: 3
-    
+
     networks:
       - sse-network
-    
+
     restart: unless-stopped
 
   # ==========================================================================
@@ -323,11 +323,11 @@ services:
   # --------------------
   # Username: admin
   # Password: admin (change on first login)
-  
+
   grafana:
     image: grafana/grafana:10.2.2
     container_name: sse-grafana
-    
+
     # ENVIRONMENT VARIABLES
     # ---------------------
     # Configure Grafana behavior
@@ -337,59 +337,74 @@ services:
       # Change these in production!
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      
+
       # ANONYMOUS ACCESS
       # ----------------
       # Disable in production
       - GF_AUTH_ANONYMOUS_ENABLED=false
-      
+
       # PROVISIONING
       # ------------
       # Enable automatic provisioning of data sources and dashboards
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
-      
+
       # LOGGING
       # -------
       - GF_LOG_LEVEL=info
-      
       # INSTALL PLUGINS
       # ---------------
       # Comma-separated list of plugins to install on startup
       # - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
-    
+
     ports:
       - "3000:3000"
-    
+
     volumes:
-      # Provisioning configuration
+      # ╔═══════════════════════════════════════════════════════════════════════════╗
+      # ║ CRITICAL FIX: Grafana Provisioning Directory Structure                    ║
+      # ╠═══════════════════════════════════════════════════════════════════════════╣
+      # ║ WHY THIS MATTERS:                                                         ║
+      # ║ Grafana's provisioning system REQUIRES a specific directory structure:    ║
+      # ║   /etc/grafana/provisioning/datasources/*.yml                             ║
+      # ║   /etc/grafana/provisioning/dashboards/*.yml                              ║
+      # ║                                                                            ║
+      # ║ WHAT BROKE BEFORE:                                                        ║
+      # ║ File-level mounts placed .yml files at the root of /provisioning/         ║
+      # ║ Grafana scanned /provisioning/datasources/ and found NOTHING              ║
+      # ║ Result: Empty dashboard list, no datasource configured                    ║
+      # ║                                                                            ║
+      # ║ THE FIX:                                                                  ║
+      # ║ Mount the ENTIRE provisioning directory, preserving subdirectory structure║
+      # ║ This allows Grafana to scan and find configs in the correct locations     ║
+      # ╚═══════════════════════════════════════════════════════════════════════════╝
       - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning:ro
-      
-      # Dashboard JSON files
-      - ./infrastructure/grafana/dashboards:/etc/grafana/provisioning/dashboards/files:ro
-      
-      # Persistent storage for Grafana database
+
+      # Dashboard JSON files (The actual templates)
+      - ./infrastructure/grafana/dashboards:/etc/grafana/dashboards:ro
+
+      # Persistent storage
       - grafana-data:/var/lib/grafana
-    
+
     depends_on:
       prometheus:
         condition: service_healthy
-    
+
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health" ]
       interval: 10s
       timeout: 5s
       retries: 3
       start_period: 30s
-    
+
     networks:
       - sse-network
-    
+
     restart: unless-stopped
 
   # ==========================================================================
   # REDIS - CACHE AND STATE STORAGE
   # ==========================================================================
-  
+
   redis-master:
     image: redis:7-alpine
     container_name: sse-redis-master
@@ -400,7 +415,7 @@ services:
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -411,7 +426,7 @@ services:
   # ==========================================================================
   # REDIS COMMANDER - REDIS WEB UI
   # ==========================================================================
-  
+
   redis-commander:
     image: rediscommander/redis-commander:latest
     container_name: sse-redis-commander
@@ -434,33 +449,33 @@ services:
   # - Exports Redis metrics in Prometheus format
   # - Monitors Redis health, memory, connections, etc.
   # - Enables Redis monitoring in Grafana
-  
+
   redis-exporter:
     image: oliver006/redis_exporter:v1.55.0-alpine
     container_name: sse-redis-exporter
-    
+
     # REDIS CONNECTION
     # ----------------
     # Point to Redis master
     environment:
       - REDIS_ADDR=redis-master:6379
-    
+
     ports:
       - "9121:9121"
-    
+
     depends_on:
       redis-master:
         condition: service_healthy
-    
+
     networks:
       - sse-network
-    
+
     restart: unless-stopped
 
   # ==========================================================================
   # KAFKA INFRASTRUCTURE (OPTIONAL)
   # ==========================================================================
-  
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
     container_name: sse-zookeeper
@@ -500,7 +515,7 @@ services:
       - sse-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list"]
+      test: [ "CMD", "kafka-topics", "--bootstrap-server", "kafka:9092", "--list" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -534,13 +549,13 @@ volumes:
   # Application data
   redis-data:
     driver: local
-  
+
   # Monitoring data
   prometheus-data:
     driver: local
   grafana-data:
     driver: local
-  
+
   # Message queue data
   zookeeper-data:
     driver: local
