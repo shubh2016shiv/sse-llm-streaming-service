@@ -70,3 +70,14 @@ performance_experiments/*
 
 # Notebooks (optional, sometimes we want to keep them, sometimes ignore checkpoints)
 .ipynb_checkpoints
+
+# SSL/TLS Certificates and Keys (Security: Never commit private keys!)
+*.key
+*.pem
+*.p12
+*.pfx
+# Certificate files (optional - uncomment if you don't want to commit certs)
+# *.crt
+# *.cer
+# Backup certificate files
+*.backup.*
