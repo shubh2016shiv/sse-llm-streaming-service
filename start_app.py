@@ -66,12 +66,12 @@ def main():
     # Import and run uvicorn
     try:
         import uvicorn
-        from config.settings import get_settings
+        from core.config.settings import get_settings
 
         settings = get_settings()
 
         uvicorn.run(
-            "app:app",
+            "application.app:app",
             host=settings.app.API_HOST,
             port=settings.app.API_PORT,
             reload=settings.app.ENVIRONMENT == "development",
