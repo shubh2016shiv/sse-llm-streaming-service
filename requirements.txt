@@ -8,6 +8,9 @@ pydantic-settings==2.3.0
 redis[hiredis]==5.0.4  # Async Redis client with C parser
 hiredis==2.3.2         # Fast Redis protocol parser
 
+# Message Queue
+aiokafka==0.10.0       # Async Kafka client
+
 # Resilience & Rate Limiting
 pybreaker==1.0.2       # Circuit breaker with Redis backend
 slowapi==0.1.9         # Rate limiting for FastAPI

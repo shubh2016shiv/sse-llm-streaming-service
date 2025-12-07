@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings==2.3.0",
     "redis[hiredis]==5.0.4",
     "hiredis==2.3.2",
+    "aiokafka==0.10.0",
     "pybreaker==1.0.2",
     "slowapi==0.1.9",
     "tenacity==8.3.0",
