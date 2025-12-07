@@ -146,7 +146,34 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
     )
 
-    # CORS middleware
+    # ========================================================================
+    # MIDDLEWARE REGISTRATION
+    # ========================================================================
+    # ENTERPRISE DECISION: Middleware Order Matters
+    # ----------------------------------------------
+    # Middleware is executed in REVERSE order of registration (last added = first executed).
+    # Our order ensures:
+    # 1. Errors are caught first (ErrorHandlingMiddleware)
+    # 2. CORS headers are added to all responses (including errors)
+    # 3. Rate limiting happens after error handling
+    #
+    # This prevents scenarios like:
+    # - Rate limit errors not having CORS headers
+    # - Unhandled exceptions bypassing error formatting
+
+    # 1. Error handling middleware (catches all unhandled exceptions)
+    # ENTERPRISE BEST PRACTICE: Centralized error handling ensures:
+    # - Consistent error response format across all endpoints
+    # - Security: prevents stack trace leakage in production
+    # - Observability: all errors are logged in one place
+    from src.application.api.middleware.error_handler import ErrorHandlingMiddleware
+
+    app.add_middleware(
+        ErrorHandlingMiddleware,
+        include_traceback=(settings.app.ENVIRONMENT == "development")
+    )
+
+    # 2. CORS middleware (adds CORS headers to all responses)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.app.CORS_ORIGINS,
@@ -156,13 +183,37 @@ def create_app() -> FastAPI:
         expose_headers=[HEADER_THREAD_ID],
     )
 
-    # Rate limiting middleware
+    # 3. Rate limiting middleware (protects against abuse)
     setup_rate_limiting(app)
 
-    # Register routers
-    app.include_router(health_router)
-    app.include_router(streaming_router)
-    app.include_router(admin_router)
+    # ========================================================================
+    # ROUTER REGISTRATION
+    # ========================================================================
+    # ENTERPRISE DECISION: Configurable Base URL
+    # -------------------------------------------
+    # All API endpoints are prefixed with API_BASE_PATH (default: /api/v1)
+    # This provides:
+    # - Professional API versioning (/api/v1, /api/v2, etc.)
+    # - Easy version management without code changes
+    # - Clear separation from root endpoints (/, /docs, /redoc)
+    # - Industry-standard URL structure
+    #
+    # Configuration:
+    # - Set API_BASE_PATH in .env or settings
+    # - Use empty string ("") for root-level endpoints
+    # - Individual routes maintain their semantic paths (/stream, /health, /admin)
+    #
+    # Example URLs:
+    # - POST /api/v1/stream (streaming endpoint)
+    # - GET /api/v1/health (health check)
+    # - GET /api/v1/admin/metrics (metrics endpoint)
+
+    base_path = settings.API_BASE_PATH
+
+    # Register routers with base path prefix
+    app.include_router(health_router, prefix=base_path)
+    app.include_router(streaming_router, prefix=base_path)
+    app.include_router(admin_router, prefix=base_path)
 
     return app
 

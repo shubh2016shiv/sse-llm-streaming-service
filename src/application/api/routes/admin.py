@@ -282,10 +282,18 @@ class UpdateConfigRequest(BaseModel):
     QUEUE_TYPE: str | None = None  # Message queue type (redis/kafka)
 
 
-@router.post("/config")
+@router.put("/config")
 async def update_configuration(request: UpdateConfigRequest):
     """
     Update runtime configuration (feature flags).
+
+    ENTERPRISE DECISION: PUT vs POST
+    ---------------------------------
+    We use PUT instead of POST because:
+    - PUT = Replace/update existing resource (idempotent)
+    - POST = Create new resource (non-idempotent)
+    - This endpoint UPDATES existing config, not creating new config
+    - Multiple identical PUT requests have the same effect (idempotent)
 
     RUNTIME CONFIGURATION:
     ----------------------
@@ -328,7 +336,7 @@ async def update_configuration(request: UpdateConfigRequest):
         dict: Updated configuration values
 
     Example Request:
-        POST /admin/config
+        PUT /admin/config
         {"USE_FAKE_LLM": true, "ENABLE_CACHING": false}
 
     Example Response:

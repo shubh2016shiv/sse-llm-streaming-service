@@ -85,6 +85,7 @@ class HealthResponse(BaseModel):
 
     status: str  # Required: "healthy", "unhealthy", "degraded"
     timestamp: str  # Required: ISO 8601 timestamp
+    version: str  # Required: Application version
     components: dict | None = None  # Optional: Status of individual components
 
 

@@ -86,6 +86,12 @@ def get_orchestrator(request: Request) -> StreamOrchestrator:
     The orchestrator is created ONCE during app startup and stored in app.state.
     Every request gets the SAME instance, which is efficient and maintains state.
 
+    TEST ENVIRONMENT SUPPORT:
+    -------------------------
+    For test environments where lifespan events don't run (e.g., TestClient),
+    we create a fallback orchestrator with minimal dependencies to allow
+    testing without requiring full infrastructure setup.
+
     Args:
         request: FastAPI Request object (automatically injected by FastAPI)
 
@@ -93,7 +99,7 @@ def get_orchestrator(request: Request) -> StreamOrchestrator:
         StreamOrchestrator: The global orchestrator instance
 
     Raises:
-        RuntimeError: If orchestrator wasn't initialized during startup
+        RuntimeError: If orchestrator can't be created or accessed
 
     Example Usage in a Route:
         @router.post("/stream")
@@ -103,16 +109,50 @@ def get_orchestrator(request: Request) -> StreamOrchestrator:
                 yield event
     """
     # Check if the orchestrator was initialized during app startup
-    if not hasattr(request.app.state, "orchestrator"):
-        # This should never happen in production if lifespan is properly configured
-        # It might happen in tests if app.state isn't properly mocked
-        raise RuntimeError(
-            "StreamOrchestrator not initialized in app.state. "
-            "This indicates the application lifespan startup didn't complete properly."
+    if hasattr(request.app.state, "orchestrator"):
+        return request.app.state.orchestrator
+
+    # Fallback for test environments where lifespan doesn't run
+    # Create a minimal orchestrator for testing without full infrastructure
+    try:
+        from src.core.config.bootstrap import register_providers
+        from src.core.config.settings import get_settings
+        from src.core.observability.execution_tracker import get_tracker
+        from src.infrastructure.cache.cache_manager import get_cache_manager
+        from src.llm_stream.providers.base_provider import ProviderFactory
+
+        settings = get_settings()
+
+        # Try to get real cache manager, fallback to None if not available
+        try:
+            cache_manager = get_cache_manager()
+        except Exception:
+            cache_manager = None
+
+        # Create provider factory and register providers
+        provider_factory = ProviderFactory()
+        register_providers(provider_factory)
+
+        # Create fallback orchestrator with minimal dependencies
+        from src.llm_stream.services.stream_orchestrator import StreamOrchestrator
+
+        orchestrator = StreamOrchestrator(
+            cache_manager=cache_manager,
+            provider_factory=provider_factory,
+            execution_tracker=get_tracker(),
+            settings=settings,
         )
 
-    # Return the singleton instance
-    return request.app.state.orchestrator
+        # Store in app state for future requests
+        request.app.state.orchestrator = orchestrator
+        return orchestrator
+
+    except Exception as e:
+        # If we can't create a fallback orchestrator, raise the original error
+        raise RuntimeError(
+            f"StreamOrchestrator not initialized in app.state and fallback creation failed: {e}. "
+            "This indicates the application lifespan startup didn't complete properly."
+        ) from e
 
 
 def get_execution_tracker() -> ExecutionTracker:
@@ -144,6 +184,56 @@ def get_execution_tracker() -> ExecutionTracker:
             return tracker.get_stage_statistics("1")
     """
     return get_tracker()
+
+
+def get_user_id(request: Request) -> str:
+    """
+    Extract user identifier from request for rate limiting and tracking.
+
+    ENTERPRISE DECISION: User Identification Strategy
+    --------------------------------------------------
+    This dependency centralizes user identification logic, following the DRY principle.
+    Instead of repeating this logic in every endpoint, we define it once here.
+
+    IDENTIFICATION HIERARCHY:
+    -------------------------
+    1. Custom Header (X-User-ID): Allows clients to identify themselves
+       - Use case: Authenticated users, API keys, service-to-service calls
+       - Example: Mobile app sends user ID after login
+
+    2. IP Address Fallback: When no custom header is provided
+       - Use case: Anonymous users, public endpoints
+       - Note: Not perfect (NAT, proxies) but sufficient for basic rate limiting
+
+    ENTERPRISE BEST PRACTICE:
+    -------------------------
+    - Centralized logic: Easy to change identification strategy
+    - Testable: Can mock this dependency in tests
+    - Flexible: Can add authentication, JWT validation, etc. here later
+    - Observable: Single place to log user identification
+
+    Args:
+        request: FastAPI Request object (auto-injected)
+
+    Returns:
+        str: User identifier (custom ID or IP address)
+
+    Example Usage:
+        @router.post("/stream")
+        async def stream(user_id: UserIdDep):
+            # user_id is automatically extracted and injected
+            logger.info(f"Request from user: {user_id}")
+    """
+    # Try custom header first (for authenticated/identified users)
+    user_id = request.headers.get("X-User-ID")
+
+    if user_id:
+        return user_id
+
+    # Fallback to client IP address for anonymous users
+    # ENTERPRISE NOTE: In production behind load balancers/proxies,
+    # you may need to check X-Forwarded-For or X-Real-IP headers
+    return request.client.host if request.client else "unknown"
 
 
 # ============================================================================
@@ -191,6 +281,12 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 # ----------------------------
 # Use this to get the execution tracker for performance monitoring.
 TrackerDep = Annotated[ExecutionTracker, Depends(get_execution_tracker)]
+
+# DEPENDENCY: User ID
+# -------------------
+# Use this to get the current user identifier for rate limiting and tracking.
+# Automatically extracts from X-User-ID header or falls back to IP address.
+UserIdDep = Annotated[str, Depends(get_user_id)]
 
 # USAGE EXAMPLE:
 # --------------

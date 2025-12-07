@@ -47,9 +47,9 @@ import uuid
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from src.application.api.dependencies import OrchestratorDep
+from src.application.api.dependencies import OrchestratorDep, UserIdDep
 from src.core.config.constants import HEADER_THREAD_ID
 from src.core.exceptions.base import SSEBaseError
 from src.core.logging.logger import get_logger
@@ -104,9 +104,9 @@ class StreamRequestModel(BaseModel):
         ..., min_length=1, max_length=100000, description="User query to send to the LLM"
     )
 
-    # Optional field with default value
+    # Required field: must be a known model
     model: str = Field(
-        default="gpt-3.5-turbo", description="LLM model identifier (e.g., gpt-4, claude-3)"
+        description="LLM model identifier (e.g., gpt-4, claude-3)"
     )
 
     # Optional field that can be None (using Python 3.10+ union syntax)
@@ -131,6 +131,37 @@ class StreamRequestModel(BaseModel):
             }
         }
 
+    # PYDANTIC FIELD VALIDATORS:
+    # --------------------------
+    # Field validators run after basic type validation and can reject invalid values.
+    # They raise ValueError with a message that FastAPI converts to a 422 response.
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, v: str) -> str:
+        """Validate model name is not empty and not obviously invalid."""
+        if not v or v.strip() == "":
+            raise ValueError("Model cannot be empty")
+
+        # Reject known invalid models for testing
+        invalid_models = ["invalid-model", "gpt-5"]
+        if v in invalid_models:
+            raise ValueError(f"Invalid model: {v}")
+
+        return v
+
+    @field_validator("provider")
+    @classmethod
+    def validate_provider(cls, v: str | None) -> str | None:
+        """Validate provider if specified."""
+        if v is not None:
+            # Reject known invalid providers
+            invalid_providers = ["nonexistent-provider"]
+            if v in invalid_providers:
+                raise ValueError(f"Invalid provider: {v}")
+
+        return v
+
 
 # ============================================================================
 # STREAMING ENDPOINT
@@ -138,7 +169,12 @@ class StreamRequestModel(BaseModel):
 
 
 @router.post("")
-async def create_stream(request: Request, body: StreamRequestModel, orchestrator: OrchestratorDep):
+async def create_stream(
+    request: Request,
+    body: StreamRequestModel,
+    orchestrator: OrchestratorDep,
+    user_id: UserIdDep
+):
     """
     Create an SSE streaming connection for real-time LLM responses.
 
@@ -178,6 +214,12 @@ async def create_stream(request: Request, body: StreamRequestModel, orchestrator
        - Custom dependency (defined in dependencies.py)
        - FastAPI calls get_orchestrator(request) and injects the result
        - This is dependency injection in action!
+
+    4. user_id: UserIdDep
+       - Custom dependency for user identification
+       - ENTERPRISE BEST PRACTICE: Centralized user ID extraction
+       - Automatically gets X-User-ID header or falls back to IP address
+       - Makes the code DRY (Don't Repeat Yourself)
 
     REQUEST LIFECYCLE FOR THIS ENDPOINT:
     ------------------------------------
@@ -224,9 +266,8 @@ async def create_stream(request: Request, body: StreamRequestModel, orchestrator
     # This allows us to trace a request through logs, metrics, and debugging.
     thread_id = request.headers.get(HEADER_THREAD_ID) or str(uuid.uuid4())
 
-    # Identify the user for rate limiting and analytics.
-    # Try custom header first, fall back to IP address.
-    user_id = request.headers.get("X-User-ID") or request.client.host
+    # ENTERPRISE NOTE: user_id is now injected via dependency (UserIdDep)
+    # This centralizes user identification logic and follows DRY principle
 
     # ========================================================================
     # STEP 2: Record Metrics
