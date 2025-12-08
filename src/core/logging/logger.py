@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Structured Logging Module using structlog
 

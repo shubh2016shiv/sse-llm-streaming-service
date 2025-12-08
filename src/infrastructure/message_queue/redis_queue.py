@@ -23,12 +23,13 @@ from datetime import datetime
 from typing import Any
 
 from aioresilience import BasicLoadShedder
+from aioresilience.config import LoadSheddingConfig
 from redis.exceptions import RedisError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
 from src.core.config.settings import get_settings
-from src.core.exceptions.base import QueueError, QueueFullError
-from src.core.interfaces import MessageQueue, QueueMessage
+from src.core.exceptions import QueueError, QueueFullError
+from src.core.interfaces.message_queue import MessageQueue, QueueMessage
 from src.core.logging.logger import get_logger
 from src.infrastructure.cache.redis_client import RedisClient, get_redis_client
 from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
@@ -65,18 +66,22 @@ class RedisQueue(MessageQueue):
         self._metrics = get_metrics_collector()
 
         # Backpressure configuration
-        self.max_depth = self.settings.queue.QUEUE_MAX_DEPTH
-        self.backpressure_threshold = self.settings.queue.QUEUE_BACKPRESSURE_THRESHOLD
-        self.backpressure_max_retries = self.settings.queue.QUEUE_BACKPRESSURE_MAX_RETRIES
-        self.backpressure_base_delay = self.settings.queue.QUEUE_BACKPRESSURE_BASE_DELAY
-        self.backpressure_max_delay = self.settings.queue.QUEUE_BACKPRESSURE_MAX_DELAY
+        # Backpressure configuration
+        self.max_depth = self.settings.QUEUE_MAX_DEPTH
+        self.backpressure_threshold = self.settings.QUEUE_BACKPRESSURE_THRESHOLD
+        self.backpressure_max_retries = self.settings.QUEUE_BACKPRESSURE_MAX_RETRIES
+        self.backpressure_base_delay = self.settings.QUEUE_BACKPRESSURE_BASE_DELAY
+        self.backpressure_max_delay = self.settings.QUEUE_BACKPRESSURE_MAX_DELAY
 
         # Load shedding (if enabled)
         self.load_shedder = None
-        if self.settings.queue.QUEUE_LOAD_SHEDDING_ENABLED:
-            self.load_shedder = BasicLoadShedder(
-                max_requests=self.settings.queue.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
+        # Load shedding (if enabled)
+        self.load_shedder = None
+        if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
+            ls_config = LoadSheddingConfig(
+                max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
             )
+            self.load_shedder = BasicLoadShedder(config=ls_config)
 
         logger.info(
             "Redis Queue initialized",
@@ -85,7 +90,7 @@ class RedisQueue(MessageQueue):
             group=self.group_name,
             max_depth=self.max_depth,
             backpressure_threshold=self.backpressure_threshold,
-            load_shedding_enabled=self.settings.queue.QUEUE_LOAD_SHEDDING_ENABLED,
+            load_shedding_enabled=self.settings.QUEUE_LOAD_SHEDDING_ENABLED,
         )
 
     async def initialize(self) -> None:

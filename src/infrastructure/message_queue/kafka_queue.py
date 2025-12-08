@@ -2,12 +2,14 @@ import json
 from datetime import datetime
 from typing import Any
 
-from aiokafka import AIOKafkaConsumer, AIOKafkaProducer, KafkaError
+from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from aiokafka.errors import KafkaError
 from aioresilience import BasicLoadShedder
+from aioresilience.config import LoadSheddingConfig
 
 from src.core.config.settings import get_settings
-from src.core.exceptions.base import QueueError, QueueFullError
-from src.core.interfaces import MessageQueue, QueueMessage
+from src.core.exceptions import QueueError, QueueFullError
+from src.core.interfaces.message_queue import MessageQueue, QueueMessage
 from src.core.logging.logger import get_logger
 from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
 
@@ -27,15 +29,17 @@ class KafkaQueue(MessageQueue):
         self._metrics = get_metrics_collector()
 
         # Backpressure configuration from settings
-        self.buffer_memory = self.settings.queue.KAFKA_BUFFER_MEMORY
-        self.max_in_flight_requests = self.settings.queue.KAFKA_MAX_IN_FLIGHT_REQUESTS
+        # Backpressure configuration from settings
+        self.buffer_memory = self.settings.KAFKA_BUFFER_MEMORY
+        self.max_in_flight_requests = self.settings.KAFKA_MAX_IN_FLIGHT_REQUESTS
 
         # Load shedding (if enabled)
         self.load_shedder = None
-        if self.settings.queue.QUEUE_LOAD_SHEDDING_ENABLED:
-            self.load_shedder = BasicLoadShedder(
-                max_requests=self.settings.queue.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
+        if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
+            ls_config = LoadSheddingConfig(
+                max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
             )
+            self.load_shedder = BasicLoadShedder(config=ls_config)
 
         self.producer: AIOKafkaProducer | None = None
         self.consumer: AIOKafkaConsumer | None = None
