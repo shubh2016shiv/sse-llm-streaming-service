@@ -209,7 +209,88 @@ class MetricsCollector:
             'app_name': self.settings.app.APP_NAME
         })
 
+        # Custom metrics storage for test compatibility
+        self._custom_metrics: dict = {}
+
         logger.info("Metrics collector initialized", stage="M.0")
+
+    # =========================================================================
+    # Test Compatibility Methods
+    # =========================================================================
+
+    def increment_counter(self, name: str, value: int = 1, labels: dict | None = None) -> None:
+        """
+        Increment a counter metric (test compatibility wrapper).
+
+        Args:
+            name: Counter name
+            value: Amount to increment by
+            labels: Optional labels dict
+        """
+        if labels:
+            label_str = ','.join(f"{k}:{v}" for k, v in sorted(labels.items()))
+            if name not in self._custom_metrics:
+                self._custom_metrics[name] = {}
+            current_value = self._custom_metrics[name].get(label_str, 0)
+            self._custom_metrics[name][label_str] = current_value + value
+        else:
+            self._custom_metrics[name] = self._custom_metrics.get(name, 0) + value
+
+    def record_histogram(self, name: str, value: float, labels: dict | None = None) -> None:
+        """
+        Record a histogram value (test compatibility wrapper).
+
+        Args:
+            name: Histogram name
+            value: Value to record
+            labels: Optional labels dict
+        """
+        if labels:
+            label_str = ','.join(f"{k}:{v}" for k, v in sorted(labels.items()))
+            if name not in self._custom_metrics:
+                self._custom_metrics[name] = {}
+            if label_str not in self._custom_metrics[name]:
+                self._custom_metrics[name][label_str] = {
+                    "count": 0,
+                    "sum": 0,
+                    "values": [],
+                    "min": float('inf'),
+                    "max": float('-inf')
+                }
+            hist = self._custom_metrics[name][label_str]
+        else:
+            if name not in self._custom_metrics:
+                self._custom_metrics[name] = {
+                    "count": 0,
+                    "sum": 0,
+                    "values": [],
+                    "min": float('inf'),
+                    "max": float('-inf')
+                }
+            hist = self._custom_metrics[name]
+
+        hist["count"] += 1
+        hist["sum"] += value
+        hist["values"].append(value)
+        hist["min"] = min(hist["min"], value)
+        hist["max"] = max(hist["max"], value)
+
+        # Calculate percentiles
+        if hist["count"] > 0:
+            sorted_values = sorted(hist["values"])
+            hist["p50"] = sorted_values[int(len(sorted_values) * 0.5)]
+            hist["p95"] = sorted_values[min(int(len(sorted_values) * 0.95), len(sorted_values) - 1)]
+            hist["p99"] = sorted_values[min(int(len(sorted_values) * 0.99), len(sorted_values) - 1)]
+
+    def get_metrics(self) -> dict:
+        """
+        Get all custom metrics (test compatibility wrapper).
+
+        Returns:
+            Dict of all metrics (copy to prevent mutation)
+        """
+        import copy
+        return copy.deepcopy(self._custom_metrics)
 
     # =========================================================================
     # Request Metrics

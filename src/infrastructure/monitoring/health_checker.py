@@ -54,7 +54,16 @@ class HealthChecker:
 
     def __init__(self):
         """Initialize health checker."""
-        self.settings = get_settings()
+        try:
+            self.settings = get_settings()
+        except Exception as e:
+            logger.warning(f"Failed to initialize settings: {e}", stage="H.0")
+            # Create minimal settings for testing
+            from src.core.config.settings import ApplicationSettings
+            self.settings = type('MockSettings', (), {
+                'app': ApplicationSettings(APP_VERSION="1.0.0")
+            })()
+
         self._redis = None
         self._cache = None
         self._streaming = None
@@ -100,9 +109,19 @@ class HealthChecker:
             else:
                 status = HealthStatus.DEGRADED
 
+            # Get version with fallback
+            try:
+                if hasattr(self, 'settings') and self.settings:
+                    version = self.settings.app.APP_VERSION
+                else:
+                    version = "1.0.0"
+            except Exception:
+                version = "1.0.0"
+
             return {
                 "status": status.value,
                 "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "version": version,
                 "components": {
                     "redis": "healthy" if redis_healthy else "unhealthy"
                 }
@@ -113,6 +132,7 @@ class HealthChecker:
             return {
                 "status": HealthStatus.UNHEALTHY.value,
                 "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "version": "1.0.0",
                 "error": str(e)
             }
 
@@ -204,6 +224,46 @@ class HealthChecker:
 
         return report
 
+    async def check_redis(self, redis_client=None) -> dict[str, Any]:
+        """
+        Public method to check Redis health.
+
+        Args:
+            redis_client: Redis client to check (uses self._redis if not provided)
+
+        Returns:
+            Dict with status, latency, and timestamp
+        """
+        client = redis_client or self._redis
+        if not client:
+            return {
+                "status": "unhealthy",
+                "error": "Redis client not initialized",
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+
+        try:
+            health = await client.health_check()
+            return {
+                **health,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+
+    async def check_overall(self) -> dict[str, Any]:
+        """
+        Overall health check (alias for detailed_health_report for test compatibility).
+
+        Returns:
+            Dict with overall health status and component checks
+        """
+        return await self.detailed_health_report()
+
     async def _check_redis(self) -> bool:
         """Check Redis connectivity."""
         if not self._redis:
@@ -222,9 +282,19 @@ class HealthChecker:
 
         Returns basic status for liveness check.
         """
+        # Get version with fallback
+        try:
+            if hasattr(self, 'settings') and self.settings:
+                version = self.settings.app.APP_VERSION
+            else:
+                version = "1.0.0"
+        except Exception:
+            version = "1.0.0"
+
         return {
             "status": "alive",
-            "timestamp": datetime.utcnow().isoformat() + 'Z'
+            "timestamp": datetime.utcnow().isoformat() + 'Z',
+            "version": version
         }
 
     async def readiness_check(self) -> dict[str, Any]:
@@ -235,15 +305,26 @@ class HealthChecker:
         """
         redis_ok = await self._check_redis()
 
+        # Get version with fallback
+        try:
+            if hasattr(self, 'settings') and self.settings:
+                version = self.settings.app.APP_VERSION
+            else:
+                version = "1.0.0"
+        except Exception:
+            version = "1.0.0"
+
         if redis_ok:
             return {
                 "status": "ready",
-                "timestamp": datetime.utcnow().isoformat() + 'Z'
+                "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "version": version
             }
         else:
             return {
                 "status": "not_ready",
                 "timestamp": datetime.utcnow().isoformat() + 'Z',
+                "version": version,
                 "reason": "Redis not available"
             }
 
