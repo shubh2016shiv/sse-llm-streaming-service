@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Redis Client with Connection Pooling
 
@@ -30,15 +29,15 @@ import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
-from src.config.settings import get_settings
+from src.core.config.settings import get_settings
 from src.core.exceptions import CacheConnectionError, CacheKeyError
-from src.core.execution_tracker import get_tracker
 from src.core.logging import get_logger
+from src.core.observability.execution_tracker import get_tracker
 
 logger = get_logger(__name__)
 
 
-class RedisPipelineManager:
+class RedisPipeline:
     """
     Auto-batching Redis pipeline for reducing round-trips.
 
@@ -130,7 +129,7 @@ class RedisClient:
     """
     Async Redis client with connection pooling and health checks.
 
-    STAGE-REDIS: Redis client initialization and operations
+    REDIS_OPERATIONS: Redis client initialization and operations
 
     This class provides:
     - Connection pooling for performance
@@ -164,18 +163,18 @@ class RedisClient:
         """
         Initialize Redis client.
 
-        STAGE-REDIS.1: Client initialization
+        REDIS.1_CLIENT_INITIALIZATION: Initialize Redis client
         """
         self.settings = get_settings()
         self.pool: ConnectionPool | None = None
         self.client: redis.Redis | None = None
         self._is_connected = False
         self._tracker = get_tracker()
-        self._pipeline_manager: RedisPipelineManager | None = None
+        self._pipeline: RedisPipeline | None = None
 
         logger.info(
             "Redis client initialized",
-            stage="REDIS.1",
+            stage="REDIS.1_CLIENT_INITIALIZATION",
             host=self.settings.redis.REDIS_HOST,
             port=self.settings.redis.REDIS_PORT
         )
@@ -184,7 +183,7 @@ class RedisClient:
         """
         Establish connection to Redis with connection pooling.
 
-        STAGE-REDIS.2: Connection establishment
+        REDIS.2_CONNECTION_ESTABLISHMENT: Establish Redis connection
 
         Creates a connection pool with:
         - Max connections: 100 (configurable)
@@ -198,7 +197,7 @@ class RedisClient:
             return
 
         try:
-            # STAGE-REDIS.2.1: Create connection pool
+            # REDIS.2.1_CREATE_CONNECTION_POOL: Create connection pool
             self.pool = ConnectionPool(
                 host=self.settings.redis.REDIS_HOST,
                 port=self.settings.redis.REDIS_PORT,
@@ -212,20 +211,20 @@ class RedisClient:
                 decode_responses=True  # Return strings instead of bytes
             )
 
-            # STAGE-REDIS.2.2: Create Redis client with pool
+            # REDIS.2.2_CREATE_REDIS_CLIENT: Create Redis client with pool
             self.client = redis.Redis(connection_pool=self.pool)
 
-            # STAGE-REDIS.2.3: Verify connection with ping
+            # REDIS.2.3_VERIFY_CONNECTION_PING: Verify connection with ping
             await self.client.ping()
 
-            # STAGE-REDIS.2.4: Initialize pipeline manager
-            self._pipeline_manager = RedisPipelineManager(self.client)
+            # REDIS.2.4_INITIALIZE_PIPELINE: Initialize pipeline
+            self._pipeline = RedisPipeline(self.client)
 
             self._is_connected = True
 
             logger.info(
                 "Redis connected successfully",
-                stage="REDIS.2",
+                stage="REDIS.2_CONNECTION_ESTABLISHMENT",
                 host=self.settings.redis.REDIS_HOST,
                 port=self.settings.redis.REDIS_PORT,
                 max_connections=self.settings.redis.REDIS_MAX_CONNECTIONS
@@ -234,7 +233,7 @@ class RedisClient:
         except (ConnectionError, TimeoutError) as e:
             logger.error(
                 "Failed to connect to Redis",
-                stage="REDIS.2",
+                stage="REDIS.2_CONNECTION_ESTABLISHMENT",
                 error=str(e)
             )
             raise CacheConnectionError(
@@ -249,7 +248,7 @@ class RedisClient:
         """
         Close Redis connection and pool.
 
-        STAGE-REDIS.3: Connection cleanup
+        REDIS.3_CONNECTION_CLEANUP: Clean up Redis connection
         """
         if self.client:
             await self.client.close()
@@ -259,7 +258,7 @@ class RedisClient:
 
         self._is_connected = False
 
-        logger.info("Redis disconnected", stage="REDIS.3")
+        logger.info("Redis disconnected", stage="REDIS.3_CONNECTION_CLEANUP")
 
     async def ping(self) -> bool:
         """
@@ -277,7 +276,7 @@ class RedisClient:
         return False
 
     @asynccontextmanager
-    async def tracked_operation(self, stage_id: str, stage_name: str, thread_id: str):
+    async def track_operation(self, stage_id: str, stage_name: str, thread_id: str):
         """
         Context manager for tracked Redis operations.
 
@@ -287,20 +286,20 @@ class RedisClient:
             thread_id: Thread ID for correlation
 
         Usage:
-            async with client.tracked_operation("2.2", "Redis GET", thread_id):
+            async with client.track_operation("2.2_L2_CACHE_LOOKUP", "Redis GET", thread_id):
                 value = await client.get("key")
         """
         with self._tracker.track_stage(stage_id, stage_name, thread_id):
             yield
 
-    def get_pipeline_manager(self) -> RedisPipelineManager | None:
+    def get_pipeline(self) -> RedisPipeline | None:
         """
-        Get the auto-batching pipeline manager.
+        Get the auto-batching pipeline for batched operations.
 
         Returns:
-            RedisPipelineManager: Pipeline manager for batched operations, or None if not connected
+            RedisPipeline: Pipeline for batched operations, or None if not connected
         """
-        return self._pipeline_manager
+        return self._pipeline
 
     # =========================================================================
     # Basic Operations
@@ -310,7 +309,7 @@ class RedisClient:
         """
         Get value from Redis.
 
-        STAGE-REDIS.GET: Redis GET operation
+        REDIS.GET_OPERATION: Redis GET operation
 
         Args:
             key: Redis key
@@ -321,7 +320,7 @@ class RedisClient:
         try:
             return await self.client.get(key)
         except RedisError as e:
-            logger.error("Redis GET failed", stage="REDIS.GET", key=key, error=str(e))
+            logger.error("Redis GET failed", stage="REDIS.GET_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis GET failed: {e}", details={"key": key})
 
     async def set(
@@ -335,7 +334,7 @@ class RedisClient:
         """
         Set value in Redis.
 
-        STAGE-REDIS.SET: Redis SET operation
+        REDIS.SET_OPERATION: Redis SET operation
 
         Args:
             key: Redis key
@@ -351,14 +350,14 @@ class RedisClient:
             result = await self.client.set(key, value, ex=ttl, nx=nx, xx=xx)
             return result is not None
         except RedisError as e:
-            logger.error("Redis SET failed", stage="REDIS.SET", key=key, error=str(e))
+            logger.error("Redis SET failed", stage="REDIS.SET_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis SET failed: {e}", details={"key": key})
 
     async def delete(self, *keys: str) -> int:
         """
         Delete keys from Redis.
 
-        STAGE-REDIS.DEL: Redis DELETE operation
+        REDIS.DEL_OPERATION: Redis DELETE operation
 
         Args:
             *keys: Keys to delete
@@ -369,7 +368,12 @@ class RedisClient:
         try:
             return await self.client.delete(*keys)
         except RedisError as e:
-            logger.error("Redis DELETE failed", stage="REDIS.DEL", keys=keys, error=str(e))
+            logger.error(
+                "Redis DELETE failed",
+                stage="REDIS.DEL_OPERATION",
+                keys=keys,
+                error=str(e),
+            )
             raise CacheKeyError(message=f"Redis DELETE failed: {e}", details={"keys": keys})
 
     async def exists(self, *keys: str) -> int:
@@ -385,7 +389,12 @@ class RedisClient:
         try:
             return await self.client.exists(*keys)
         except RedisError as e:
-            logger.error("Redis EXISTS failed", stage="REDIS.EXISTS", keys=keys, error=str(e))
+            logger.error(
+                "Redis EXISTS failed",
+                stage="REDIS.EXISTS_OPERATION",
+                keys=keys,
+                error=str(e),
+            )
             raise CacheKeyError(message=f"Redis EXISTS failed: {e}", details={"keys": keys})
 
     async def expire(self, key: str, ttl: int) -> bool:
@@ -402,7 +411,12 @@ class RedisClient:
         try:
             return await self.client.expire(key, ttl)
         except RedisError as e:
-            logger.error("Redis EXPIRE failed", stage="REDIS.EXPIRE", key=key, error=str(e))
+            logger.error(
+                "Redis EXPIRE failed",
+                stage="REDIS.EXPIRE_OPERATION",
+                key=key,
+                error=str(e),
+            )
             raise CacheKeyError(message=f"Redis EXPIRE failed: {e}", details={"key": key})
 
     async def ttl(self, key: str) -> int:
@@ -418,7 +432,7 @@ class RedisClient:
         try:
             return await self.client.ttl(key)
         except RedisError as e:
-            logger.error("Redis TTL failed", stage="REDIS.TTL", key=key, error=str(e))
+            logger.error("Redis TTL failed", stage="REDIS.TTL_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis TTL failed: {e}", details={"key": key})
 
     # =========================================================================
@@ -432,7 +446,7 @@ class RedisClient:
         except RedisError as e:
             logger.error(
                 "Redis HGET failed",
-                stage="REDIS.HGET",
+                stage="REDIS.HGET_OPERATION",
                 name=name,
                 key=key,
                 error=str(e),
@@ -449,7 +463,7 @@ class RedisClient:
         except RedisError as e:
             logger.error(
                 "Redis HSET failed",
-                stage="REDIS.HSET",
+                stage="REDIS.HSET_OPERATION",
                 name=name,
                 key=key,
                 error=str(e),
@@ -466,7 +480,7 @@ class RedisClient:
         except RedisError as e:
             logger.error(
                 "Redis HGETALL failed",
-                stage="REDIS.HGETALL",
+                stage="REDIS.HGETALL_OPERATION",
                 name=name,
                 error=str(e),
             )
@@ -482,7 +496,7 @@ class RedisClient:
         except RedisError as e:
             logger.error(
                 "Redis HDEL failed",
-                stage="REDIS.HDEL",
+                stage="REDIS.HDEL_OPERATION",
                 name=name,
                 keys=keys,
                 error=str(e),
@@ -501,7 +515,7 @@ class RedisClient:
         try:
             return await self.client.incr(key)
         except RedisError as e:
-            logger.error("Redis INCR failed", stage="REDIS.INCR", key=key, error=str(e))
+            logger.error("Redis INCR failed", stage="REDIS.INCR_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis INCR failed: {e}", details={"key": key})
 
     async def incrby(self, key: str, amount: int) -> int:
@@ -509,7 +523,12 @@ class RedisClient:
         try:
             return await self.client.incrby(key, amount)
         except RedisError as e:
-            logger.error("Redis INCRBY failed", stage="REDIS.INCRBY", key=key, error=str(e))
+            logger.error(
+                "Redis INCRBY failed",
+                stage="REDIS.INCRBY_OPERATION",
+                key=key,
+                error=str(e),
+            )
             raise CacheKeyError(message=f"Redis INCRBY failed: {e}", details={"key": key})
 
     async def decr(self, key: str) -> int:
@@ -517,7 +536,7 @@ class RedisClient:
         try:
             return await self.client.decr(key)
         except RedisError as e:
-            logger.error("Redis DECR failed", stage="REDIS.DECR", key=key, error=str(e))
+            logger.error("Redis DECR failed", stage="REDIS.DECR_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis DECR failed: {e}", details={"key": key})
 
     # =========================================================================
@@ -529,7 +548,7 @@ class RedisClient:
         try:
             return await self.client.lpush(key, *values)
         except RedisError as e:
-            logger.error("Redis LPUSH failed", stage="REDIS.LPUSH", key=key, error=str(e))
+            logger.error("Redis LPUSH failed", stage="REDIS.LPUSH_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis LPUSH failed: {e}", details={"key": key})
 
     async def rpop(self, key: str) -> str | None:
@@ -537,7 +556,7 @@ class RedisClient:
         try:
             return await self.client.rpop(key)
         except RedisError as e:
-            logger.error("Redis RPOP failed", stage="REDIS.RPOP", key=key, error=str(e))
+            logger.error("Redis RPOP failed", stage="REDIS.RPOP_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis RPOP failed: {e}", details={"key": key})
 
     async def llen(self, key: str) -> int:
@@ -545,7 +564,7 @@ class RedisClient:
         try:
             return await self.client.llen(key)
         except RedisError as e:
-            logger.error("Redis LLEN failed", stage="REDIS.LLEN", key=key, error=str(e))
+            logger.error("Redis LLEN failed", stage="REDIS.LLEN_OPERATION", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis LLEN failed: {e}", details={"key": key})
 
     # =========================================================================
@@ -572,7 +591,7 @@ class RedisClient:
         """
         Perform health check on Redis connection.
 
-        STAGE-REDIS.HEALTH: Redis health check
+        REDIS.HEALTH_CHECK: Redis health check and monitoring
 
         Includes pool health monitoring:
         - Current pool connections
