@@ -401,8 +401,8 @@ async def cache_manager(mock_settings):
         mock_redis.get = AsyncMock(return_value=None)
         mock_redis.set = AsyncMock(return_value=True)
         mock_redis.health_check = AsyncMock(return_value={"status": "healthy"})
-        # Return None to test fallback
-        mock_redis.get_pipeline_manager = AsyncMock(return_value=None)
+        # get_pipeline_manager is synchronous, not async
+        mock_redis.get_pipeline_manager = MagicMock(return_value=None)
         mock_get_redis.return_value = mock_redis
 
         # Initialize

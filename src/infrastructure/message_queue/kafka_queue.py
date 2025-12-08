@@ -80,7 +80,8 @@ class KafkaQueue(MessageQueue):
 
         # Check load shedding first (if enabled)
         if self.load_shedder is not None:
-            if not await self.load_shedder.accept():
+            should_shed, _ = self.load_shedder.should_shed_load()
+            if should_shed:
                 self._metrics.record_queue_produce_failure("kafka", "load_shedding")
                 logger.warning(
                     "Load shedding active - rejecting request",
