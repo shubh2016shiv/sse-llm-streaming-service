@@ -31,7 +31,7 @@ from redis.asyncio.connection import ConnectionPool
 from redis.exceptions import ConnectionError, RedisError, TimeoutError
 
 from src.core.config.settings import get_settings
-from src.core.exceptions.base import CacheConnectionError, CacheKeyError
+from src.core.exceptions import CacheConnectionError, CacheKeyError
 from src.core.logging.logger import get_logger
 from src.core.observability.execution_tracker import get_tracker
 
