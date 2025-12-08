@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Centralized Execution Time Tracking Module
 
@@ -87,7 +86,7 @@ class ExecutionTracker:
     """
     Centralized execution time tracker for all request stages.
 
-    STAGE-ET: Execution tracking initialization
+    EXECUTION_TRACKER: Execution tracking initialization and operations
 
     This class provides context managers for automatic timing of stages
     and sub-stages. All timing data is correlated with thread IDs for
@@ -142,7 +141,7 @@ class ExecutionTracker:
         """
         Initialize execution tracker.
 
-        STAGE-ET.1: Tracker initialization
+        ET.1_TRACKER_INITIALIZATION: Initialize execution tracker
         """
         # Storage for execution data by thread ID
         self._executions: dict[str, list[StageExecution]] = {}
@@ -157,7 +156,7 @@ class ExecutionTracker:
 
         logger.info(
             "Execution tracker initialized",
-            stage="ET.1",
+            stage="ET.1_TRACKER_INITIALIZATION",
             sample_rate=self._sample_rate,
             tracking_enabled=self._tracking_enabled,
         )
@@ -303,7 +302,7 @@ class ExecutionTracker:
         """
         Context manager for tracking a stage execution.
 
-        STAGE-ET.2: Stage tracking
+        ET.2_STAGE_TRACKING: Track stage execution with automatic timing
 
         Respects sampling configuration - only tracks if should_track() returns True.
         Can be forced via force_tracking parameter for debugging specific requests.
@@ -334,7 +333,7 @@ class ExecutionTracker:
             yield None
             return
 
-        # STAGE-ET.2.1: Create stage execution object
+        # ET.2.1_CREATE_STAGE_EXECUTION: Create stage execution object
         execution = StageExecution(
             stage_id=stage_id,
             stage_name=stage_name,
@@ -343,15 +342,15 @@ class ExecutionTracker:
             metadata=metadata,
         )
 
-        # STAGE-ET.2.2: Initialize thread storage if needed
+        # ET.2.2_INITIALIZE_THREAD_STORAGE: Initialize thread storage if needed
         if thread_id not in self._executions:
             self._executions[thread_id] = []
             self._stage_stack[thread_id] = []
 
-        # STAGE-ET.2.3: Push to stage stack
+        # ET.2.3_PUSH_TO_STAGE_STACK: Push to stage stack
         self._stage_stack[thread_id].append(execution)
 
-        # STAGE-ET.2.4: Record start time
+        # ET.2.4_RECORD_START_TIME: Record start time
         start_time = time.perf_counter()
 
         # Log stage start
@@ -365,14 +364,14 @@ class ExecutionTracker:
         )
 
         try:
-            # STAGE-ET.2.5: Execute stage code
+            # ET.2.5_EXECUTE_STAGE_CODE: Execute stage code
             yield execution
 
-            # STAGE-ET.2.6: Mark as successful
+            # ET.2.6_MARK_SUCCESSFUL: Mark as successful
             execution.success = True
 
         except Exception as e:
-            # STAGE-ET.2.7: Capture exception information
+            # ET.2.7_CAPTURE_EXCEPTION: Capture exception information
             execution.success = False
             execution.error_type = type(e).__name__
             execution.error_message = str(e)
@@ -391,17 +390,17 @@ class ExecutionTracker:
             raise
 
         finally:
-            # STAGE-ET.2.8: Calculate duration
+            # ET.2.8_CALCULATE_DURATION: Calculate duration
             end_time = time.perf_counter()
             duration_ms = (end_time - start_time) * 1000
 
             execution.ended_at = datetime.utcnow().isoformat() + "Z"
             execution.duration_ms = round(duration_ms, 2)
 
-            # STAGE-ET.2.9: Pop from stage stack
+            # ET.2.9_POP_FROM_STACK: Pop from stage stack
             self._stage_stack[thread_id].pop()
 
-            # STAGE-ET.2.10: Add to parent stage if nested, otherwise to executions
+            # ET.2.10_ADD_TO_PARENT: Add to parent stage if nested, otherwise to executions
             if self._stage_stack[thread_id]:
                 # Nested: add to parent's substages
                 parent = self._stage_stack[thread_id][-1]
@@ -410,7 +409,7 @@ class ExecutionTracker:
                 # Top-level: add to executions
                 self._executions[thread_id].append(execution)
 
-            # STAGE-ET.2.11: Log stage completion
+            # ET.2.11_LOG_COMPLETION: Log stage completion
             log_stage(
                 logger,
                 stage_id,
@@ -426,7 +425,7 @@ class ExecutionTracker:
         """
         Context manager for tracking a sub-stage execution.
 
-        STAGE-ET.3: Sub-stage tracking
+        ET.3_SUBSTAGE_TRACKING: Track sub-stage execution
 
         This must be called within a track_stage context. The thread ID
         is automatically inherited from the parent stage.
@@ -445,7 +444,7 @@ class ExecutionTracker:
                     # Sub-stage code here
                     pass
         """
-        # STAGE-ET.3.1: Get thread ID from current stage stack
+        # ET.3.1_GET_THREAD_ID: Get thread ID from current stage stack
         # Find the thread ID from any active stage
         thread_id = None
         for tid, stack in self._stage_stack.items():
@@ -463,7 +462,7 @@ class ExecutionTracker:
             yield None
             return
 
-        # STAGE-ET.3.2: Use track_stage for sub-stage (same logic)
+        # ET.3.2_USE_TRACK_STAGE: Use track_stage for sub-stage (same logic)
         with self.track_stage(substage_id, substage_name, thread_id, **metadata) as execution:
             yield execution
 
@@ -471,7 +470,7 @@ class ExecutionTracker:
         """
         Get execution summary for a thread.
 
-        STAGE-ET.4: Execution summary retrieval
+        ET.4_EXECUTION_SUMMARY_RETRIEVAL: Get execution summary for a thread
 
         Args:
             thread_id: Thread ID to get summary for
@@ -524,7 +523,7 @@ class ExecutionTracker:
         """
         Get statistics for a specific stage across all threads.
 
-        STAGE-ET.5: Stage statistics calculation
+        ET.5_STAGE_STATISTICS_CALCULATION: Calculate statistics for a specific stage
 
         Args:
             stage_id: Stage identifier to get statistics for
@@ -595,7 +594,7 @@ class ExecutionTracker:
         """
         Clear execution data for a thread.
 
-        STAGE-ET.6: Thread data cleanup
+        ET.6_THREAD_DATA_CLEANUP: Clean up execution data for a thread
 
         Args:
             thread_id: Thread ID to clear data for
@@ -608,7 +607,11 @@ class ExecutionTracker:
         if thread_id in self._stage_stack:
             del self._stage_stack[thread_id]
 
-        logger.debug("Cleared execution data for thread", thread_id=thread_id, stage="ET.6")
+        logger.debug(
+            "Cleared execution data for thread",
+            thread_id=thread_id,
+            stage="ET.6_THREAD_DATA_CLEANUP",
+        )
 
 
 # Global execution tracker instance (singleton)
