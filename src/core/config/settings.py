@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Centralized Configuration Module using Pydantic Settings
 

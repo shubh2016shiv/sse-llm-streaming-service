@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 System Constants and Enumerations
 
@@ -25,22 +24,43 @@ class Stage(str, Enum):
     """
     Request processing stages for execution tracking.
 
+    Format: {SEQUENCE}_{DESCRIPTIVE_NAME}
+    - SEQUENCE: Numeric order (0.0, 1.0, 2.0) or alphabetic prefix (CB, R)
+    - DESCRIPTIVE_NAME: Clear, uppercase description with underscores
+
     Each stage represents a major phase in request processing.
     Used for structured logging and performance monitoring.
+
+    Benefits of descriptive naming:
+    - Logs are immediately understandable without code lookup
+    - Metrics dashboards show clear, professional labels
+    - New developers can follow execution flow from logs alone
+    - Debugging is faster with self-documenting stage identifiers
+
+    Examples:
+        # Old (cryptic): stage="2.1"
+        # New (clear):   stage="2.1_L1_CACHE_LOOKUP"
+
+        # Old (cryptic): stage="CB.3"
+        # New (clear):   stage="CB.3_CIRCUIT_STATE_CHECK"
     """
 
-    INITIALIZATION = "0"
-    REQUEST_VALIDATION = "1"
-    CACHE_LOOKUP = "2"
-    RATE_LIMITING = "3"
-    PROVIDER_SELECTION = "4"
-    LLM_STREAMING = "5"
-    CLEANUP = "6"
-    CIRCUIT_BREAKER = "CB"
-    RETRY = "R"
-    QUEUE = "Q"
-    METRICS = "M"
-    LOGGING = "L"
+    # Main Request Lifecycle (Sequential 0.0 - 6.0)
+    INITIALIZATION = "0.0_INITIALIZATION"
+    REQUEST_VALIDATION = "1.0_REQUEST_VALIDATION"
+    CACHE_LOOKUP = "2.0_CACHE_LOOKUP"
+    RATE_LIMITING = "3.0_RATE_LIMITING"
+    PROVIDER_SELECTION = "4.0_PROVIDER_SELECTION"
+    LLM_STREAMING = "5.0_LLM_STREAMING"
+    CLEANUP = "6.0_CLEANUP"
+
+    # Cross-Cutting Concerns (Alphabetic Prefixes)
+    CIRCUIT_BREAKER = "CB_CIRCUIT_BREAKER"
+    RETRY = "R_RETRY_LOGIC"
+    QUEUE = "Q_MESSAGE_QUEUE"
+    METRICS = "M_METRICS_COLLECTION"
+    LOGGING = "L_LOGGING_OPERATIONS"
+
 
 
 # ============================================================================

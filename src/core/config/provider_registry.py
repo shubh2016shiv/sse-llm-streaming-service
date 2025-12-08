@@ -1,7 +1,17 @@
 """
-Provider Registration
+LLM Provider Registry
 
-Registers all available LLM providers with the factory on application startup.
+This module handles the registration of all available LLM providers (OpenAI, DeepSeek, Gemini, Fake)
+with the provider factory during application startup.
+
+Architectural Decision: Centralized provider registration
+- Single location for all provider configurations
+- Conditional registration based on API key availability
+- Supports multiple providers simultaneously
+- Easy to add new providers
+
+Author: System Architect
+Date: 2025-12-05
 """
 
 from src.core.config.settings import get_settings
