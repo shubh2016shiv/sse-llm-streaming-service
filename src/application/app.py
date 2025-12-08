@@ -22,7 +22,7 @@ from src.application.api.routes.health import router as health_router
 from src.application.api.routes.streaming import router as streaming_router
 from src.core.config.constants import HEADER_THREAD_ID
 from src.core.config.settings import get_settings
-from src.core.exceptions.base import RateLimitExceededError, SSEBaseError
+from src.core.exceptions import RateLimitExceededError, SSEBaseError
 from src.core.logging.logger import clear_thread_id, get_logger, set_thread_id, setup_logging
 from src.core.observability.execution_tracker import get_tracker
 from src.core.resilience.circuit_breaker import get_circuit_breaker_manager
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
         provider_factory = ProviderFactory()
 
         # Register LLM providers
-        from src.core.config.bootstrap import register_providers
+        from src.core.config.provider_registry import register_providers
 
         register_providers(provider_factory)
         logger.info("LLM providers registered")

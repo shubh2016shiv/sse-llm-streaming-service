@@ -51,7 +51,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.application.api.dependencies import OrchestratorDep, UserIdDep
 from src.core.config.constants import HEADER_THREAD_ID
-from src.core.exceptions.base import SSEBaseError
+from src.core.exceptions import SSEBaseError
 from src.core.logging.logger import get_logger
 from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
 from src.llm_stream.models.stream_request import SSEEvent, StreamRequest

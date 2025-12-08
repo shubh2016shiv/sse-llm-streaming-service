@@ -115,7 +115,7 @@ def get_orchestrator(request: Request) -> StreamOrchestrator:
     # Fallback for test environments where lifespan doesn't run
     # Create a minimal orchestrator for testing without full infrastructure
     try:
-        from src.core.config.bootstrap import register_providers
+        from src.core.config.provider_registry import register_providers
         from src.core.config.settings import get_settings
         from src.core.observability.execution_tracker import get_tracker
         from src.infrastructure.cache.cache_manager import get_cache_manager

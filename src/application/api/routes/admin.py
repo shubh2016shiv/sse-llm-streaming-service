@@ -365,7 +365,7 @@ async def update_configuration(request: UpdateConfigRequest):
 
         # Re-register providers with new fake/real setting
         # This ensures new requests use the correct provider type
-        from src.core.config.bootstrap import register_providers
+        from src.core.config.provider_registry import register_providers
 
         register_providers()
 
