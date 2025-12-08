@@ -7,13 +7,13 @@ Tests provider implementations, factory selection, and stream chunk processing.
 
 import pytest
 
-from src.llm_stream.providers.base_provider import (
+from src.llm_providers.base_provider import (
     BaseProvider,
     ProviderConfig,
     ProviderFactory,
     StreamChunk,
 )
-from src.llm_stream.providers.fake_provider import FakeProvider
+from src.llm_providers.fake_provider import FakeProvider
 from tests.test_fixtures.provider_factory import ProviderTestFactory
 
 

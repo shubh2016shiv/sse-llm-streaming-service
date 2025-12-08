@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.llm_stream.providers.base_provider import StreamChunk
+from src.llm_providers.base_provider import StreamChunk
 from src.llm_stream.services.stream_orchestrator import StreamOrchestrator
 
 

@@ -213,7 +213,7 @@ def mock_provider_factory():
 
     Returns a factory with a mock provider.
     """
-    from src.llm_stream.providers.base_provider import BaseProvider, ProviderFactory
+    from src.llm_providers.base_provider import BaseProvider, ProviderFactory
 
     factory = MagicMock(spec=ProviderFactory)
 
@@ -235,7 +235,7 @@ def fake_provider_factory():
     """
     Fake provider factory that creates controllable provider stubs.
     """
-    from src.llm_stream.providers.base_provider import BaseProvider, ProviderFactory
+    from src.llm_providers.base_provider import BaseProvider, ProviderFactory
 
     class FakeProvider(BaseProvider):
         def __init__(self, name="fake", chunks=None, should_fail=False, circuit_state="closed"):
@@ -318,7 +318,7 @@ def sample_stream_chunks():
 
     Returns a list of chunks simulating a typical LLM response.
     """
-    from src.llm_stream.providers.base_provider import StreamChunk
+    from src.llm_providers.base_provider import StreamChunk
 
     return [
         StreamChunk(content="The", finish_reason=None),
@@ -339,7 +339,7 @@ def empty_stream_chunks():
 @pytest.fixture
 def error_stream_chunks():
     """Chunks that include an error scenario."""
-    from src.llm_stream.providers.base_provider import StreamChunk
+    from src.llm_providers.base_provider import StreamChunk
 
     return [
         StreamChunk(content="This", finish_reason=None),

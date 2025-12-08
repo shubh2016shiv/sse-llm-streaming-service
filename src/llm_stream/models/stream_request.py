@@ -1,9 +1,10 @@
 import json
 import uuid
+from copy import deepcopy
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RequestPriority(str, Enum):
@@ -31,6 +32,7 @@ class StreamRequest(BaseModel):
     Rationale: Enables fair resource allocation - premium users get higher priority,
     allowing better QoS for high-value customers while still serving regular users.
     """
+    model_config = {"frozen": True}
     query: str = Field(
         ...,
         min_length=1,
@@ -65,13 +67,42 @@ class StreamRequest(BaseModel):
         """
         return RequestPriority.HIGH if is_premium_user else RequestPriority.NORMAL
 
+    def __hash__(self):
+        """Custom hash function to handle Dict fields."""
+        # Use stable JSON representation for metadata
+        metadata_str = json.dumps(self.metadata, sort_keys=True)
+        return hash((
+            self.query,
+            self.model,
+            self.provider,
+            self.thread_id,
+            self.user_id,
+            self.priority,
+            metadata_str
+        ))
+
 class SSEEvent(BaseModel):
     """
     Represents an SSE event to send to client.
     """
+    model_config = {"frozen": True}
+
     event: str
     data: Any
     id: str | None = None
+
+    @field_validator("data", mode="before")
+    @classmethod
+    def copy_data(cls, v):
+        """Ensure data is copied to prevent mutation of original reference."""
+        # Simple copy for dicts/lists to avoid reference issues
+        if isinstance(v, dict | list):
+            try:
+                return deepcopy(v)
+            except Exception:
+                # Fallback if uncopyable
+                return v
+        return v
 
     def format(self) -> str:
         """Format as SSE protocol string."""

@@ -16,7 +16,7 @@ Date: 2025-12-05
 
 from src.core.config.settings import get_settings
 from src.core.logging.logger import get_logger
-from src.llm_stream.providers import (
+from src.llm_providers import (
     DeepSeekProvider,
     GeminiProvider,
     OpenAIProvider,
@@ -81,7 +81,7 @@ def register_providers(factory=None) -> None:
 
     # Register Fake Provider (Experiment Mode)
     if settings.USE_FAKE_LLM:
-        from src.llm_stream.providers.fake_provider import FakeProvider
+        from src.llm_providers.fake_provider import FakeProvider
 
         factory.register(
             name="fake",

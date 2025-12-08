@@ -27,7 +27,7 @@ from src.core.exceptions import (
     RateLimitExceededError,
 )
 from src.core.logging import get_logger
-from src.llm_stream.providers.base_provider import BaseProvider, ProviderConfig, StreamChunk
+from src.llm_providers.base_provider import BaseProvider, ProviderConfig, StreamChunk
 
 logger = get_logger(__name__)
 

@@ -89,7 +89,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from src.application.validators.stream_validator import RequestValidator
+from src.application.validators.stream_validator import StreamRequestValidator as RequestValidator
 from src.core.config.constants import (
     SSE_EVENT_CHUNK,
     SSE_EVENT_COMPLETE,
@@ -98,15 +98,12 @@ from src.core.config.constants import (
     SSE_HEARTBEAT_INTERVAL,
 )
 from src.core.config.settings import Settings
-from src.core.exceptions.base import (
-    AllProvidersDownError,
-    SSEBaseError,
-)
+from src.core.exceptions import AllProvidersDownError, SSEBaseError
 from src.core.logging.logger import clear_thread_id, get_logger, log_stage, set_thread_id
 from src.core.observability.execution_tracker import ExecutionTracker
 from src.infrastructure.cache.cache_manager import CacheManager
+from src.llm_providers.base_provider import ProviderFactory
 from src.llm_stream.models.stream_request import SSEEvent, StreamRequest
-from src.llm_stream.providers.base_provider import ProviderFactory
 
 logger = get_logger(__name__)
 

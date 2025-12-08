@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
         tracker = get_tracker()
 
         # Initialize provider factory and register providers
-        from src.llm_stream.providers.base_provider import ProviderFactory
+        from src.llm_providers.base_provider import ProviderFactory
 
         provider_factory = ProviderFactory()
 

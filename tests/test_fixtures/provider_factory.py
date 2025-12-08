@@ -5,7 +5,7 @@ Creates controllable provider stubs for testing various scenarios.
 """
 
 
-from src.llm_stream.providers.base_provider import BaseProvider, ProviderConfig, StreamChunk
+from src.llm_providers.base_provider import BaseProvider, ProviderConfig, StreamChunk
 
 
 class ProviderTestFactory:

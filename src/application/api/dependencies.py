@@ -119,7 +119,7 @@ def get_orchestrator(request: Request) -> StreamOrchestrator:
         from src.core.config.settings import get_settings
         from src.core.observability.execution_tracker import get_tracker
         from src.infrastructure.cache.cache_manager import get_cache_manager
-        from src.llm_stream.providers.base_provider import ProviderFactory
+        from src.llm_providers.base_provider import ProviderFactory
 
         settings = get_settings()
 
