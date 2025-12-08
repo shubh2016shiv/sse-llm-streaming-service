@@ -1,17 +1,11 @@
-#!/usr/bin/env python3
 """
-Custom Exception Hierarchy for SSE Streaming Microservice
+Base Exception Class
 
-This module defines a structured exception hierarchy for the entire application.
-All exceptions inherit from SSEBaseError for consistent error handling.
-
-Architectural Decision: Structured exception hierarchy
-- Easy to catch specific error types
-- Thread ID correlation for debugging
-- Consistent error messages and logging
+This module contains ONLY the base exception class that all other exceptions inherit from.
+All specialized exceptions are in their respective themed modules.
 
 Author: System Architect
-Date: 2025-12-05
+Date: 2025-12-08
 """
 
 from typing import Any
@@ -92,229 +86,67 @@ class SSEBaseError(Exception):
         self.details.update(context)
         return self
 
+    def __repr__(self) -> str:
+        """
+        Return detailed string representation for debugging.
 
-# ============================================================================
-# Configuration Exceptions
-# ============================================================================
+        Returns:
+            String representation with class name, message, thread_id, and details
+
+        Example:
+            >>> error = ProviderTimeoutError(
+            ...     "Timeout", thread_id="abc-123", details={"timeout": 30}
+            ... )
+            >>> repr(error)
+            "ProviderTimeoutError(message='Timeout', thread_id='abc-123', details={'timeout': 30})"
+        """
+        details_str = f", details={self.details}" if self.details else ""
+        thread_id_str = f", thread_id='{self.thread_id}'" if self.thread_id else ""
+        return f"{self.__class__.__name__}(message='{self.message}'{thread_id_str}{details_str})"
+
+    @classmethod
+    def from_exception(
+        cls,
+        exc: Exception,
+        message: str | None = None,
+        thread_id: str | None = None,
+        **details
+    ) -> "SSEBaseError":
+        """
+        Create SSEBaseError from another exception.
+
+        Useful for wrapping third-party exceptions with additional context.
+
+        Args:
+            exc: Original exception to wrap
+            message: Custom message (defaults to original exception message)
+            thread_id: Thread ID for correlation
+            **details: Additional context to include
+
+        Returns:
+            New SSEBaseError instance with wrapped exception details
+
+        Example:
+            >>> try:
+            ...     await redis.connect()
+            ... except redis.ConnectionError as e:
+            ...     raise CacheConnectionError.from_exception(
+            ...         e,
+            ...         thread_id="abc-123",
+            ...         host="localhost",
+            ...         port=6379
+            ...     )
+        """
+        error_message = message or str(exc)
+        error_details = {
+            "original_error": exc.__class__.__name__,
+            "original_message": str(exc),
+            **details
+        }
+        return cls(error_message, thread_id=thread_id, details=error_details)
 
 
+# Configuration exception (kept here as it's fundamental)
 class ConfigurationError(SSEBaseError):
     """Raised when configuration is invalid or missing."""
-
-    pass
-
-
-# ============================================================================
-# Cache Exceptions
-# ============================================================================
-
-
-class CacheError(SSEBaseError):
-    """Base exception for cache-related errors."""
-
-    pass
-
-
-class CacheConnectionError(CacheError):
-    """Raised when unable to connect to cache (Redis)."""
-
-    pass
-
-
-class CacheKeyError(CacheError):
-    """Raised when cache key operation fails."""
-
-    pass
-
-
-# ============================================================================
-# Queue Exceptions
-# ============================================================================
-
-
-class QueueError(SSEBaseError):
-    """Base exception for message queue errors."""
-
-    pass
-
-
-class QueueFullError(QueueError):
-    """Raised when queue is full (backpressure)."""
-
-    pass
-
-
-class QueueConsumerError(QueueError):
-    """Raised when queue consumer encounters an error."""
-
-    pass
-
-
-# ============================================================================
-# Provider Exceptions
-# ============================================================================
-
-
-class ProviderError(SSEBaseError):
-    """Base exception for LLM provider errors."""
-
-    pass
-
-
-class ProviderNotAvailableError(ProviderError):
-    """Raised when LLM provider is not available."""
-
-    pass
-
-
-class ProviderAuthenticationError(ProviderError):
-    """Raised when LLM provider authentication fails."""
-
-    pass
-
-
-class ProviderTimeoutError(ProviderError):
-    """Raised when LLM provider request times out."""
-
-    pass
-
-
-class ProviderAPIError(ProviderError):
-    """Raised when LLM provider API returns an error."""
-
-    pass
-
-
-class AllProvidersDownError(ProviderError):
-    """Raised when all LLM providers are unavailable."""
-
-    pass
-
-
-# ============================================================================
-# Circuit Breaker Exceptions
-# ============================================================================
-
-
-class CircuitBreakerError(SSEBaseError):
-    """Base exception for circuit breaker errors."""
-
-    pass
-
-
-class CircuitBreakerOpenError(CircuitBreakerError):
-    """
-    Raised when circuit breaker is open (fail fast).
-
-    STAGE-CB.3: Circuit breaker open exception
-
-    This exception indicates that the circuit breaker is open and
-    requests are being rejected to prevent cascade failures.
-    """
-
-    pass
-
-
-# ============================================================================
-# Rate Limiting Exceptions
-# ============================================================================
-
-
-class RateLimitError(SSEBaseError):
-    """Base exception for rate limiting errors."""
-
-    pass
-
-
-class RateLimitExceededError(RateLimitError):
-    """
-    Raised when rate limit is exceeded.
-
-    STAGE-3: Rate limit exceeded exception
-
-    This exception is raised when a user/IP exceeds their rate limit.
-    """
-
-    pass
-
-
-# ============================================================================
-# Streaming Exceptions
-# ============================================================================
-
-
-class StreamingError(SSEBaseError):
-    """Base exception for streaming errors."""
-
-    pass
-
-
-class StreamingTimeoutError(StreamingError):
-    """Raised when streaming operation times out."""
-
-    pass
-
-
-class ConnectionPoolExhaustedError(StreamingError):
-    """Raised when connection pool is exhausted."""
-
-    pass
-
-
-# ============================================================================
-# Validation Exceptions
-# ============================================================================
-
-
-class ValidationError(SSEBaseError):
-    """Raised when request validation fails."""
-
-    pass
-
-
-class InvalidModelError(ValidationError):
-    """
-    Raised when invalid model is specified.
-
-    This error should include:
-    - The requested model name
-    - The provider name
-    - List of supported models
-    - Suggestion for a valid model
-
-    Example:
-        raise InvalidModelError(
-            f"Model '{model}' not supported by provider '{provider}'",
-            details={
-                "requested_model": model,
-                "provider": provider,
-                "supported_models": ["gpt-3.5-turbo", "gpt-4"],
-                "suggestion": "Try: gpt-3.5-turbo"
-            }
-        )
-    """
-
-    pass
-
-
-class InvalidInputError(ValidationError):
-    """Raised when input validation fails."""
-
-    pass
-
-
-# ============================================================================
-# Execution Tracker Exceptions
-# ============================================================================
-
-
-class ExecutionTrackerError(SSEBaseError):
-    """Base exception for execution tracker errors."""
-
-    pass
-
-
-class StageNotFoundError(ExecutionTrackerError):
-    """Raised when stage is not found in execution tracker."""
-
     pass
