@@ -56,7 +56,7 @@ from tenacity import (
 
 from src.core.config.constants import MAX_RETRIES, RETRY_BASE_DELAY, RETRY_MAX_DELAY
 from src.core.config.settings import get_settings
-from src.core.exceptions.base import (
+from src.core.exceptions import (
     CircuitBreakerOpenError,
     ProviderTimeoutError,
 )
