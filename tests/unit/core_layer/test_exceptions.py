@@ -1,12 +1,13 @@
 """
 Unit Tests for Core Exceptions
 
-Tests exception hierarchy, error messages, and context handling.
+Tests for exception handling.
 """
 
 import pytest
 
-from src.core.exceptions.base import (
+# Import from new themed modules
+from src.core.exceptions import (
     AllProvidersDownError,
     CircuitBreakerOpenError,
     ProviderTimeoutError,
