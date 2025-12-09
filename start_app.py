@@ -14,7 +14,7 @@ Date: 2025-12-05
 import sys
 from pathlib import Path
 
-from infrastructure.manage import InfrastructureManager, ServiceState
+from infrastructure.manage import InfrastructureManager
 
 # Add src to Python path
 project_root = Path(__file__).parent
@@ -34,22 +34,23 @@ def main():
 
     # Step 1: Check if infrastructure is running
     print("Step 1: Checking infrastructure status...")
-    status = manager.status()
+    manager.status()
 
-    # Step 2: Start infrastructure if not running
-    redis_running = status.get("redis-master") == ServiceState.RUNNING
+    # Step 2: Stop existing infrastructure to ensure clean state
+    print("\nStep 2: Stopping existing infrastructure for clean restart...")
+    manager.stop()
+    print("[OK] Infrastructure stopped successfully")
 
-    if not redis_running:
-        print("\nStep 2: Starting infrastructure...")
-        if not manager.start():
-            print("\n[X] Failed to start infrastructure")
-            print("Please check Docker and try again.")
-            sys.exit(1)
-    else:
-        print("\nStep 2: Infrastructure already running")
+    # Step 3: Start infrastructure with fresh state
+    print("\nStep 3: Starting infrastructure...")
+    if not manager.start():
+        print("\n[X] Failed to start infrastructure")
+        print("Please check Docker and try again.")
+        sys.exit(1)
+    print("[OK] Infrastructure started successfully")
 
-    # Step 3: Validate infrastructure health
-    print("\nStep 3: Validating infrastructure health...")
+    # Step 4: Validate infrastructure health
+    print("\nStep 4: Validating infrastructure health...")
     if not manager.wait_for_healthy(timeout=30):
         print("\n[X] Infrastructure is not healthy")
         print("Please check the services and try again.")
@@ -58,8 +59,8 @@ def main():
     print("\n[OK] Infrastructure is ready!")
     print()
 
-    # Step 4: Start FastAPI application
-    print("Step 4: Starting FastAPI application...")
+    # Step 5: Start FastAPI application
+    print("Step 5: Starting FastAPI application...")
     print("=" * 60)
     print()
 
