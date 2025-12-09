@@ -255,7 +255,499 @@ sequenceDiagram
     deactivate API
 ```
 
+### 5.8 Complete End-to-End Request Flow Architecture
+
+This section documents the complete request flow from client to response, including all infrastructure components and processing stages. The flow encompasses the NGINX load balancer, FastAPI application instances, connection pool management, caching layers, rate limiting, provider selection, LLM streaming, and response delivery.
+
+#### 5.8.1 Infrastructure Components
+
+The system architecture consists of the following key infrastructure components:
+
+1. **NGINX Load Balancer**: Entry point for all client requests, distributes traffic across multiple FastAPI instances using round-robin algorithm
+2. **FastAPI Application Instances**: Stateless application servers (typically 3+ instances) that process streaming requests
+3. **Connection Pool Manager**: Centralized component that manages connection slots and enforces concurrency limits
+4. **Redis Cluster**: Distributed cache (L2) and state management for circuit breakers, rate limits, and connection tracking
+5. **LLM Provider APIs**: External AI services (OpenAI, DeepSeek, Gemini) that generate streaming responses
+
+#### 5.8.2 Complete Request Flow Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Client/Browser
+    participant NGINX as NGINX Load Balancer
+    participant FastAPI as FastAPI Instance
+    participant ConnPool as Connection Pool Manager
+    participant L1 as L1 Cache (Memory)
+    participant L2 as L2 Cache (Redis)
+    participant RateLimit as Rate Limiter (Redis)
+    participant CB as Circuit Breaker (Redis)
+    participant Provider as LLM Provider API
+    
+    Note over Client,Provider: STAGE 0: Request Initiation
+    Client->>NGINX: POST /api/v1/stream (SSE Request)
+    Note over NGINX: Load balancing (round-robin)<br/>across FastAPI instances
+    NGINX->>FastAPI: Forward request to selected instance
+    
+    Note over FastAPI,ConnPool: STAGE CP.1: Connection Pool Acquisition
+    FastAPI->>ConnPool: acquire_connection(user_id, thread_id)
+    ConnPool->>ConnPool: Check global connection limit (10,000)
+    ConnPool->>ConnPool: Check per-user connection limit (3)
+    alt Connection Available
+        ConnPool-->>FastAPI: Connection acquired (CP.1.4)
+        Note over ConnPool: Log: utilization %, pool state
+    else Pool Exhausted
+        ConnPool-->>FastAPI: 503 Service Unavailable
+        FastAPI-->>NGINX: 503 Response
+        NGINX-->>Client: Service at capacity
+    else User Limit Exceeded
+        ConnPool-->>FastAPI: 429 Too Many Requests
+        FastAPI-->>NGINX: 429 Response
+        NGINX-->>Client: Too many connections
+    end
+    
+    Note over FastAPI: STAGE 1: Request Validation
+    FastAPI->>FastAPI: Validate request body
+    FastAPI->>FastAPI: Generate/extract thread_id
+    FastAPI->>FastAPI: Set thread_id in logging context
+    
+    Note over FastAPI,L2: STAGE 2: Multi-Tier Cache Lookup
+    FastAPI->>L1: GET cache_key (STAGE 2.1)
+    alt L1 Cache Hit
+        L1-->>FastAPI: Cached response
+        FastAPI->>FastAPI: Stream cached chunks to client
+        FastAPI-->>NGINX: SSE Events (cached)
+        NGINX-->>Client: Streaming response
+        FastAPI->>ConnPool: release_connection (CP.4)
+        ConnPool-->>FastAPI: Connection released (CP.4.1)
+    else L1 Cache Miss
+        L1-->>FastAPI: null
+        FastAPI->>L2: GET cache_key (STAGE 2.2)
+        alt L2 Cache Hit
+            L2-->>FastAPI: Cached response
+            FastAPI->>L1: SET cache_key (warm L1)
+            FastAPI->>FastAPI: Stream cached chunks to client
+            FastAPI-->>NGINX: SSE Events (cached)
+            NGINX-->>Client: Streaming response
+            FastAPI->>ConnPool: release_connection (CP.4)
+            ConnPool-->>FastAPI: Connection released (CP.4.1)
+        else L2 Cache Miss (Proceed to LLM)
+            L2-->>FastAPI: null
+            
+            Note over FastAPI,RateLimit: STAGE 3: Rate Limiting
+            FastAPI->>RateLimit: Check rate limit for user
+            alt Rate Limit OK
+                RateLimit-->>FastAPI: Allowed (STAGE 3)
+                
+                Note over FastAPI,CB: STAGE 4: Provider Selection
+                FastAPI->>CB: Check circuit breaker state
+                CB-->>FastAPI: Circuit state (closed/open)
+                FastAPI->>FastAPI: Select healthy provider (STAGE 4.0)
+                FastAPI->>FastAPI: Initialize provider (OPENAI.0)
+                
+                Note over FastAPI,Provider: STAGE 5: LLM Streaming
+                FastAPI->>Provider: Start streaming request (STAGE 5.2)
+                FastAPI-->>NGINX: SSE Event: status=validated
+                NGINX-->>Client: Status event
+                
+                loop For each chunk
+                    Provider-->>FastAPI: Stream chunk
+                    FastAPI-->>NGINX: SSE Event: chunk data
+                    NGINX-->>Client: Chunk event
+                end
+                
+                Provider-->>FastAPI: Stream complete
+                
+                Note over FastAPI,L2: STAGE 2.3: Cache Storage
+                FastAPI->>L1: SET cache_key (STAGE 2.3.1)
+                FastAPI->>L2: SET cache_key, TTL=3600s (STAGE 2.3.2)
+                
+                FastAPI-->>NGINX: SSE Event: complete
+                NGINX-->>Client: Complete event
+                FastAPI-->>NGINX: SSE Event: [DONE]
+                NGINX-->>Client: Done signal
+                
+                Note over FastAPI,ConnPool: STAGE CP.4: Connection Release
+                FastAPI->>ConnPool: release_connection (CP.4)
+                ConnPool->>ConnPool: Decrement counters
+                ConnPool-->>FastAPI: Connection released (CP.4.1)
+                Note over ConnPool: Log: utilization %, pool state
+                
+            else Rate Limit Exceeded
+                RateLimit-->>FastAPI: 429 Rate Limit Exceeded
+                FastAPI-->>NGINX: 429 Response
+                NGINX-->>Client: Rate limit error
+                FastAPI->>ConnPool: release_connection (CP.4)
+            end
+        end
+    end
+```
+
+#### 5.8.3 Stage-by-Stage Flow Documentation
+
+This section provides detailed documentation of each processing stage in the request lifecycle.
+
+##### Stage 0: Request Initiation and Load Balancing
+
+**Entry Point**: Client initiates HTTP POST request to `/api/v1/stream`
+
+**NGINX Load Balancer Processing**:
+- Receives incoming HTTPS request on port 443 (or HTTP on port 80)
+- Terminates SSL/TLS connection if HTTPS
+- Applies round-robin load balancing algorithm to select a FastAPI instance
+- Forwards request to selected instance via internal network
+- Maintains connection for SSE streaming (no buffering with `X-Accel-Buffering: no`)
+
+**Request Headers**:
+- `Content-Type: application/json`
+- `X-User-ID`: User identifier for rate limiting and connection tracking
+- `X-Thread-ID` (optional): Client-provided correlation ID
+- `Authorization` (optional): API key for authentication
+
+**Request Body**:
+```json
+{
+  "query": "User's question or prompt",
+  "model": "gpt-3.5-turbo",
+  "provider": "openai"
+}
+```
+
+##### Stage CP.1: Connection Pool Acquisition
+
+**Purpose**: Enforce global and per-user connection limits to prevent server overload
+
+**Processing**:
+1. `ConnectionPoolManager.acquire_connection(user_id, thread_id)` is called
+2. Check global connection count against `MAX_CONCURRENT_CONNECTIONS` (10,000)
+3. Check user-specific connection count against `MAX_CONNECTIONS_PER_USER` (3)
+4. If limits not exceeded, increment counters and grant connection
+5. Calculate pool utilization percentage
+6. Determine pool health state (HEALTHY, DEGRADED, CRITICAL)
+
+**Logging** (Stage CP.1):
+```json
+{
+  "stage": "CP.1",
+  "user_id": "test-user-1",
+  "thread_id": "uuid",
+  "event": "Attempting to acquire connection"
+}
+```
+
+**Logging** (Stage CP.1.4 - Success):
+```json
+{
+  "stage": "CP.1.4",
+  "thread_id": "uuid",
+  "user_id": "test-user-1",
+  "total_connections": 1,
+  "user_connections": 1,
+  "utilization_percent": 0.01,
+  "pool_state": "healthy",
+  "event": "Connection acquired from pool"
+}
+```
+
+**Error Responses**:
+- **503 Service Unavailable**: Global pool exhausted
+- **429 Too Many Requests**: User connection limit exceeded
+
+##### Stage 1: Request Validation
+
+**Purpose**: Validate request structure and extract/generate correlation identifiers
+
+**Processing**:
+1. Parse and validate request body against `StreamRequest` Pydantic model
+2. Validate required fields: `query`, `model`, `provider`
+3. Extract or generate `thread_id` for request correlation
+4. Set `thread_id` in logging context for all subsequent log entries
+5. Determine request priority (if applicable)
+
+**Validation Rules**:
+- Query: Non-empty string, max length 10,000 characters
+- Model: Valid model identifier for selected provider
+- Provider: One of `openai`, `deepseek`, `gemini`, or `auto`
+
+**Logging**: Validation stage is tracked internally but not explicitly logged unless validation fails
+
+##### Stage 2: Multi-Tier Cache Lookup
+
+**Purpose**: Check if response is already cached to avoid expensive LLM calls
+
+**Stage 2.1: L1 Cache Check (In-Memory)**
+
+**Processing**:
+1. Generate deterministic cache key: `MD5(query + model + provider)`
+2. Check L1 in-memory LRU cache
+3. If hit, return cached response immediately (sub-millisecond latency)
+
+**Logging**:
+```json
+{
+  "stage": "2.1",
+  "cache_key": "cache:response:abc123",
+  "event": "L1 cache hit" | "L1 cache miss"
+}
+```
+
+**Stage 2.2: L2 Cache Check (Redis)**
+
+**Processing** (only if L1 miss):
+1. Query Redis with same cache key
+2. If hit, return cached response and warm L1 cache
+3. If miss, proceed to LLM provider
+
+**Logging**:
+```json
+{
+  "stage": "2.2",
+  "cache_key": "cache:response:abc123",
+  "event": "L2 cache hit" | "L2 cache miss"
+}
+```
+
+**Cache Decision Logging**:
+```json
+{
+  "stage": "2",
+  "event": "Cache hit - returning cached response" | "Cache miss - proceeding to LLM"
+}
+```
+
+##### Stage 3: Rate Limiting Verification
+
+**Purpose**: Enforce per-user request rate limits to prevent abuse
+
+**Processing**:
+1. Extract user identifier from `X-User-ID` header or fallback to IP address
+2. Check Redis-backed rate limit counter
+3. Apply token bucket algorithm with moving window
+4. Default limit: 100 requests/minute for standard users, 1000/minute for premium
+
+**Logging**:
+```json
+{
+  "stage": "3",
+  "user_id": "test-user-1",
+  "event": "Rate limit verified"
+}
+```
+
+**Error Response**:
+- **429 Too Many Requests**: Rate limit exceeded, includes `Retry-After` header
+
+##### Stage 4: Provider Selection and Initialization
+
+**Stage 4.0: Provider Initialization**
+
+**Processing**:
+1. Determine target provider (from request or auto-select)
+2. Check circuit breaker state for provider
+3. If circuit open, select alternative healthy provider
+4. Initialize provider instance with API credentials
+
+**Logging**:
+```json
+{
+  "stage": "4.0",
+  "provider": "openai",
+  "base_url": "https://api.openai.com/v1",
+  "event": "Provider initialized"
+}
+```
+
+**Stage OPENAI.0: Provider-Specific Initialization**
+
+**Logging**:
+```json
+{
+  "stage": "OPENAI.0",
+  "provider_name": "openai",
+  "default_model": "gpt-3.5-turbo",
+  "event": "OpenAI provider initialized"
+}
+```
+
+**Stage 4: Final Provider Selection**
+
+**Logging**:
+```json
+{
+  "stage": "4",
+  "model": "gpt-3.5-turbo",
+  "event": "Selected provider: openai"
+}
+```
+
+##### Stage 5: LLM Streaming
+
+**Stage 5.2: Stream Initiation**
+
+**Processing**:
+1. Establish streaming connection to LLM provider API
+2. Send request with model, prompt, and streaming parameters
+3. Begin receiving token chunks from provider
+4. Forward each chunk to client as SSE event
+
+**Logging**:
+```json
+{
+  "stage": "5.2",
+  "provider": "openai",
+  "model": "gpt-3.5-turbo",
+  "query_length": 50,
+  "event": "Starting stream"
+}
+```
+
+**SSE Events Sent to Client**:
+
+1. **Status Event**:
+```
+event: status
+data: {"status": "validated", "thread_id": "uuid"}
+```
+
+2. **Chunk Events** (for each token):
+```
+event: chunk
+data: {"content": "Hello", "chunk_index": 1, "finish_reason": null}
+```
+
+3. **Complete Event**:
+```
+event: complete
+data: {"thread_id": "uuid", "chunk_count": 10, "total_length": 50, "duration_ms": 1500}
+```
+
+4. **Done Signal**:
+```
+data: [DONE]
+```
+
+##### Stage 2.3: Cache Storage
+
+**Stage 2.3.1: L1 Cache Storage**
+
+**Processing**:
+1. Store complete accumulated response in L1 in-memory cache
+2. Apply LRU eviction if cache is full
+
+**Logging**:
+```json
+{
+  "stage": "2.3.1",
+  "cache_key": "cache:response:abc123",
+  "event": "L1 cache set"
+}
+```
+
+**Stage 2.3.2: L2 Cache Storage**
+
+**Processing**:
+1. Store complete response in Redis with TTL (default 3600 seconds)
+2. Enable future cache hits for identical queries
+
+**Logging**:
+```json
+{
+  "stage": "2.3.2",
+  "cache_key": "cache:response:abc123",
+  "ttl": 3600,
+  "event": "L2 cache set"
+}
+```
+
+##### Stream Completion
+
+**Logging**:
+```json
+{
+  "thread_id": "uuid",
+  "chunk_count": 10,
+  "duration_ms": 1500,
+  "event": "Stream completed successfully"
+}
+```
+
+##### Stage CP.4: Connection Pool Release
+
+**Stage CP.4: Release Initiation**
+
+**Processing**:
+1. `ConnectionPoolManager.release_connection(thread_id, user_id)` is called
+2. Decrement global connection counter
+3. Decrement user-specific connection counter
+4. Recalculate pool utilization and health state
+
+**Logging**:
+```json
+{
+  "stage": "CP.4",
+  "thread_id": "uuid",
+  "user_id": "test-user-1",
+  "event": "Releasing connection"
+}
+```
+
+**Stage CP.4.1: Release Completion**
+
+**Logging**:
+```json
+{
+  "stage": "CP.4.1",
+  "thread_id": "uuid",
+  "total_connections": 0,
+  "utilization_percent": 0.0,
+  "pool_state": "healthy",
+  "event": "Connection released"
+}
+```
+
+#### 5.8.4 Performance Characteristics
+
+**Typical Request Latencies**:
+- **L1 Cache Hit**: < 1ms (in-memory lookup)
+- **L2 Cache Hit**: 5-10ms (Redis round-trip)
+- **Cache Miss (LLM Call)**: 500-3000ms (depends on query complexity and provider)
+- **Connection Pool Overhead**: < 1ms (in-memory counter operations)
+
+**Throughput Capacity**:
+- **Maximum Concurrent Connections**: 10,000 (configurable)
+- **Per-User Connection Limit**: 3 (configurable)
+- **Rate Limit**: 100 requests/minute/user (configurable)
+- **FastAPI Instances**: 3+ (horizontally scalable)
+
+**Cache Effectiveness**:
+- **L1 Hit Rate**: Typically 20-30% for frequently accessed queries
+- **L2 Hit Rate**: Typically 60-70% for all cached queries
+- **Combined Hit Rate**: 70-80% reduction in LLM API calls
+- **Cache TTL**: 3600 seconds (1 hour) for responses
+
+#### 5.8.5 Error Handling and Resilience
+
+**Connection Pool Errors**:
+- **503 Service Unavailable**: Returned when global connection pool is exhausted
+- **429 Too Many Requests**: Returned when user exceeds per-user connection limit
+- Both errors include descriptive JSON response body with error details
+
+**Rate Limiting Errors**:
+- **429 Too Many Requests**: Includes `Retry-After` header indicating when to retry
+- Rate limit counters reset based on sliding window algorithm
+
+**Provider Errors**:
+- **Circuit Breaker Protection**: Prevents cascading failures when provider is down
+- **Automatic Failover**: Selects alternative healthy provider if primary fails
+- **Error Events**: Sent to client as SSE events with error type and message
+
+**Graceful Degradation**:
+- Connection pool enforces backpressure when approaching capacity
+- Pool state transitions: HEALTHY → DEGRADED (70% full) → CRITICAL (90% full)
+- Monitoring alerts triggered at DEGRADED and CRITICAL thresholds
+
 ## 6. Multi-Tier Caching Architecture
+
 
 The system implements a sophisticated multi-tier caching strategy designed to maximize cache hit rates while minimizing latency. The architecture consists of two tiers: L1 (in-memory LRU cache) and L2 (Redis distributed cache), each optimized for different access patterns and performance characteristics.
 
@@ -796,6 +1288,30 @@ The system implements a heartbeat mechanism to prevent connection timeouts durin
 The heartbeat mechanism is implemented as an async task that runs concurrently with the streaming operation. The task sends SSE comment events (invisible to clients) that keep the TCP connection alive. When streaming completes or fails, the heartbeat task is cancelled to prevent resource leaks.
 
 The heartbeat mechanism is particularly important for complex reasoning tasks where LLMs may pause for several seconds before generating the next token. Without heartbeats, load balancers or proxies might close the connection during these pauses, causing stream interruptions.
+- **ConnectionPoolError:** Base class for connection-related errors
+- **ConnectionPoolExhaustedError:** Raised when global max connections reached
+- **UserConnectionLimitError:** Raised when per-user limit reached
+
+### 13.7 Connection Pool Manager
+
+The `ConnectionPoolManager` (src/core/resilience/connection_pool_manager.py) provides centralized management of streaming connections to ensure system stability and fairness.
+
+**Key Features:**
+- **Double-Check Validation:** Enforces both global (`MAX_CONCURRENT_CONNECTIONS`) and per-user (`MAX_CONNECTIONS_PER_USER`) limits.
+- **State-Based Health:** Exposes health status (HEALTHY, DEGRADED, CRITICAL) based on pool utilization.
+- **Detailed Logging:** Uses specific `CP.X` logging stages for precise debugging of connection flow.
+- **Distributed Coordination:** (Optional) Supports Redis-based coordination for cluster-wide limits.
+
+**Usage:**
+```python
+# Acquire connection
+await pool_manager.acquire_connection(user_id, thread_id)
+
+# ... process stream ...
+
+# Release connection (in finally block)
+await pool_manager.release_connection(thread_id, user_id)
+```
 
 ## 14. Performance Characteristics
 

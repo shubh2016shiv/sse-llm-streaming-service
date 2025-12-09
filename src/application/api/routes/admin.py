@@ -170,7 +170,7 @@ async def get_circuit_breaker_statistics():
         }
     """
     circuit_breaker_manager = get_circuit_breaker_manager()
-    return circuit_breaker_manager.get_all_stats()
+    return await circuit_breaker_manager.get_all_stats()
 
 
 # ============================================================================

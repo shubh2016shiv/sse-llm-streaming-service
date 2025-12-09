@@ -183,6 +183,10 @@ LATENCY_THRESHOLD_SLOW = 2000  # > 2s is slow
 MAX_CONCURRENT_CONNECTIONS = 10000  # Maximum concurrent SSE connections
 MAX_CONNECTIONS_PER_USER = 3  # Maximum connections per user
 
+# Connection pool health thresholds
+CONNECTION_POOL_DEGRADED_THRESHOLD = 0.7  # 70% capacity - degraded state
+CONNECTION_POOL_CRITICAL_THRESHOLD = 0.9  # 90% capacity - critical state
+
 # Timeout values (seconds)
 FIRST_CHUNK_TIMEOUT = 10  # First chunk must arrive within 10s
 TOTAL_REQUEST_TIMEOUT = 300  # Total request timeout (5 minutes)

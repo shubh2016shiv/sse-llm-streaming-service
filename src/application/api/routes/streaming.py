@@ -46,7 +46,7 @@ This module contains the SSE streaming endpoint for real-time LLM responses.
 import uuid
 
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from src.application.api.dependencies import OrchestratorDep, UserIdDep
@@ -270,7 +270,55 @@ async def create_stream(
     # This centralizes user identification logic and follows DRY principle
 
     # ========================================================================
-    # STEP 2: Record Metrics
+    # STEP 2: Connection Pool Management
+    # ========================================================================
+    # Acquire a connection slot from the pool before processing.
+    # This provides backpressure and prevents server overload.
+    from src.core.exceptions import ConnectionPoolExhaustedError, UserConnectionLimitError
+    from src.core.resilience.connection_pool_manager import get_connection_pool_manager
+
+    pool_manager = get_connection_pool_manager()
+
+    try:
+        # Try to acquire connection from pool
+        await pool_manager.acquire_connection(user_id=user_id, thread_id=thread_id)
+    except ConnectionPoolExhaustedError as e:
+        # Pool is exhausted - return 503 Service Unavailable
+        logger.warning(
+            "Connection pool exhausted - returning 503",
+            thread_id=thread_id,
+            user_id=user_id
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "service_unavailable",
+                "message": "Server at capacity. Please try again later.",
+                "details": e.details
+            },
+            headers={HEADER_THREAD_ID: thread_id}
+        )
+    except UserConnectionLimitError as e:
+        # User exceeded per-user limit - return 429 Too Many Requests
+        logger.warning(
+            "User connection limit exceeded - returning 429",
+            thread_id=thread_id,
+            user_id=user_id
+        )
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "too_many_connections",
+                "message": (
+                    f"Too many concurrent connections. Maximum {pool_manager.max_per_user} allowed."
+                ),
+                "details": e.details
+            },
+            headers={HEADER_THREAD_ID: thread_id}
+        )
+
+    # ========================================================================
+    # STEP 3: Record Metrics
     # ========================================================================
     # Track active connections for monitoring and capacity planning.
     # This is decremented in the finally block to ensure accurate counts.
@@ -377,18 +425,28 @@ async def create_stream(
             metrics.record_request("error", body.provider or "auto", body.model)
             metrics.record_error("internal_error", "stream")
 
-            # Log detailed error for debugging (includes full exception)
-            logger.error("Unexpected error in stream", thread_id=thread_id, error=str(e))
+            # Log detailed error for debugging (includes full exception and traceback)
+            import traceback
+            logger.error(
+                f"Unexpected error in stream: {type(e).__name__}: {str(e)}",
+                thread_id=thread_id,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                traceback=traceback.format_exc()
+            )
 
         finally:
             # FINALLY BLOCK:
             # --------------
             # This ALWAYS runs, even if there's an error or early return.
             # Critical for cleanup operations like:
-            # - Closing connections
-            # - Releasing resources
+            # - Releasing connection pool slot
             # - Updating metrics
-            #
+            # - Ensuring no resource leaks
+
+            # Release connection back to pool
+            await pool_manager.release_connection(thread_id=thread_id, user_id=user_id)
+
             # Decrement active connections counter.
             # This ensures our metrics stay accurate even if errors occur.
             metrics.decrement_connections()

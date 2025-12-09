@@ -202,7 +202,7 @@ class HealthChecker:
         try:
             from src.core.resilience.circuit_breaker import get_circuit_breaker_manager
             cb_manager = get_circuit_breaker_manager()
-            cb_stats = cb_manager.get_all_stats()
+            cb_stats = await cb_manager.get_all_stats()
             report["components"]["circuit_breakers"] = cb_stats
 
             # Check for open circuits

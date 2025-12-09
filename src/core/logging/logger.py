@@ -124,11 +124,30 @@ def setup_logging(log_level: str | None = None, log_format: str | None = None) -
     # Use settings if not provided
     log_level = log_level or settings.logging.LOG_LEVEL
     log_format = log_format or settings.logging.LOG_FORMAT
+    log_file = settings.logging.LOG_FILE
+
+    # Configure handlers
+    handlers = [logging.StreamHandler(sys.stdout)]
+
+    if log_file:
+        import os
+        log_dir = os.path.dirname(log_file)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file))
 
     # Configure standard library logging
-    logging.basicConfig(
-        format="%(message)s", stream=sys.stdout, level=getattr(logging, log_level.upper())
-    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
+
+    # Avoid duplicate handlers if setup called twice
+    if root_logger.hasHandlers():
+        root_logger.handlers.clear()
+
+    formatter = logging.Formatter("%(message)s")
+    for handler in handlers:
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
 
     # Choose renderer based on format
     if log_format == "json":

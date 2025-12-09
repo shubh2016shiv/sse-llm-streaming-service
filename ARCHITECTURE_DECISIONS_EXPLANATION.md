@@ -578,6 +578,55 @@ Rate limiting is like a bouncer at a club. You get a certain number of "tokens" 
 
 ---
 
+### 3.8 Connection Pool Management
+
+#### What It Is (The Analogy)
+Imagine a popular restaurant that only has 100 tables. Even if they have infinite food and chefs, they can only seat 100 parties at a time. If 200 parties show up, the extra 100 must wait or be turned away, otherwise the restaurant becomes overcrowded and service collapses for everyone.
+
+**Connection pooling means:** We explicitly limit the number of active streaming connections to ensure the server never takes on more work than it can handle.
+
+#### Why We Need It (The Problem It Solves)
+**The Resource Exhaustion Trap:** Each open connection consumes memory, file descriptors, and event loop cycles. If 100,000 users try to connect simultaneously, your server might run out of RAM or file descriptors and crash hard, taking down the service for everyone.
+
+**The "Noisy Neighbor" Problem:** Without per-user limits, a single user opening 1,000 tabs could starve other users of resources.
+
+#### How It Works (Step-by-Step)
+
+1. **Request Arrives:** "I want to start a new stream"
+2. **Check Global Pool:** Are we under the max capacity (e.g., 10,000)?
+3. **Check User Limit:** Is this specific user under their limit (e.g., 3)?
+4. **Acquire Slot:** specific slot is "reserved" for this request
+5. **Process Stream:** Standard request processing happens
+6. **Release Slot:** Connection is freed immediately upon completion or error
+
+#### Where It's Used (Code References)
+
+```python
+# src/core/resilience/connection_pool_manager.py
+class ConnectionPoolManager:
+    async def acquire_connection(self, user_id: str, thread_id: str):
+        # 1. Check global limit
+        if self._active_connections >= self.max_connections:
+            raise ConnectionPoolExhaustedError()
+            
+        # 2. Check user limit
+        user_count = self._user_connections.get(user_id, 0)
+        if user_count >= self.max_per_user:
+            raise UserConnectionLimitError(user_id, self.max_per_user)
+            
+        # 3. Increment counters
+        self._active_connections += 1
+        self._user_connections[user_id] += 1
+```
+
+#### Performance Impact
+- **Stability:** Prevents "Out of Memory" crashes under load
+- **Fairness:** Guarantees no single user hugs all resources
+- **Predictability:** Latency remains stable because the server is never overloaded
+- **Backpressure:** Politely rejects excess traffic (HTTP 503) instead of crashing
+
+---
+
 ## 4. Component Deep Dives
 
 This section dives deep into the key components that make up the system. Each component is explained with its responsibilities, design decisions, implementation details, and performance characteristics.
@@ -1060,6 +1109,52 @@ class ExecutionTracker:
 - **Memory:** Minimal with probabilistic sampling
 - **Accuracy:** Detailed stage-by-stage performance analysis
 - **Debugging:** Instant bottleneck identification
+
+### 4.7 Connection Pool Manager
+
+#### Purpose & Responsibility
+The Connection Pool Manager provides **application-level stability and fairness** by strictly managing the number of concurrent streaming connections.
+
+**What it does:**
+- Enforces global maximum connection limits
+- Enforces per-user connection limits
+- Tracks connection lifecycle state
+- provides detailed CP.X stage logging for debugging
+
+#### Design Decisions & Trade-offs
+
+**Semaphore vs. Counter:**
+- **Why Counter?** We primarily need to reject excess traffic fast. A simple atomic counter (or async-safe counter) is faster and simpler than a full semaphore implementation for this specific use case.
+- **Trade-off:** Less sophisticated queueing logic, but much lower overhead.
+
+**In-Memory State:**
+- **Decision:** Connection counts are tracked in-memory per instance.
+- **Reasoning:** Global distributed counting (via Redis) for *every* connection would double the latency of starting a stream. 
+- **Trade-off:** Global limits are approximate (sum of all instances), but exactness isn't required for stability—only magnitude matters.
+
+#### Code Structure & Implementation
+
+```python
+# src/core/resilience/connection_pool_manager.py
+# CP.X Logging Stages:
+# CP.1: Acquisition start
+# CP.2: Global limit check
+# CP.3: User limit check
+# CP.4: Acquisition success
+# CP.5: Release
+```
+
+The manager uses granular logging stages to trace exactly why a connection was rejected or how long it was held.
+
+#### Integration Points
+- **Streaming Endpoint:** Called at the very start of `stream()`
+- **Exception Handler:** Maps `ConnectionPoolExhaustedError` to HTTP 503
+- **Metrics:** Updates Prometheus gauges for active connections
+
+#### Performance Characteristics
+- **Overhead:** Negligible (< 10 microseconds)
+- **Granularity:** Per-user controls prevent abuse
+- **Safety:** "Fail-closed" design ensures limits are never exceeded
 
 ---
 

@@ -359,3 +359,56 @@ class StreamRequestValidator:
             model=model,
             provider=provider
         )
+
+    def validate_query(self, query: str) -> None:
+        """
+        Validate query content.
+
+        Convenience method for validating just the query.
+
+        Args:
+            query: User query string
+
+        Raises:
+            QueryValidationError: If validation fails
+        """
+        self.query_validator.validate(query)
+
+    def validate_model(self, model: str, provider: str | None = None) -> None:
+        """
+        Validate model identifier.
+
+        Convenience method for validating just the model.
+
+        Args:
+            model: Model identifier
+            provider: Provider name (optional, for provider-specific validation)
+
+        Raises:
+            ModelValidationError: If validation fails
+        """
+        self.model_validator.validate(model, provider)
+
+    def check_connection_limit(self, current_connections: int) -> None:
+        """
+        Check if connection limit would be exceeded.
+
+        Args:
+            current_connections: Current number of active connections
+
+        Raises:
+            ValidationError: If connection limit would be exceeded
+        """
+        # Get max connections from settings with fallback to constant
+        from src.core.config.constants import MAX_CONCURRENT_CONNECTIONS
+        from src.core.config.settings import get_settings
+
+        settings = get_settings()
+        max_connections = getattr(settings.app, 'MAX_CONNECTIONS', MAX_CONCURRENT_CONNECTIONS)
+
+        if current_connections >= max_connections:
+            from src.application.validators.exceptions import ValidationError
+            raise ValidationError(
+                f"Connection limit exceeded: {current_connections}/{max_connections}",
+                field="connections"
+            )
