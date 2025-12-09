@@ -1,0 +1,126 @@
+version: '3.8'
+
+# ============================================================================
+# PERFORMANCE DASHBOARD - STANDALONE DOCKER COMPOSE
+# ============================================================================
+#
+# This Docker Compose file runs the Performance Dashboard independently
+# from the main SSE backend infrastructure.
+#
+# ARCHITECTURE:
+# -------------
+#   Browser → Dashboard Container (Port 3001)
+#           → SSE Backend Network (external)
+#           → NGINX Load Balancer
+#           → Backend API
+#
+# REQUIREMENTS:
+# -------------
+# The SSE backend must be running with the 'sse-network' network available.
+# Start the backend first: cd .. && docker-compose up -d
+#
+# USAGE:
+# ------
+# docker-compose up -d     # Start dashboard
+# docker-compose logs -f   # View logs
+# docker-compose down      # Stop dashboard
+#
+# ============================================================================
+
+services:
+  # ==========================================================================
+  # PERFORMANCE DASHBOARD - FRONTEND APPLICATION
+  # ==========================================================================
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: performance-dashboard
+
+    # PORT MAPPING
+    # ------------
+    # Map container port 80 to host port 3001
+    # Access at: http://localhost:3001
+    ports:
+      - "3001:80"
+
+    # ENVIRONMENT VARIABLES
+    # ---------------------
+    # Configure API endpoint dynamically
+    environment:
+      # Option 1: Use nginx load balancer on external network (recommended)
+      - VITE_API_BASE_URL=http://sse-nginx
+      # Option 2: Direct to app instance (bypass load balancer)
+      # - VITE_API_BASE_URL=http://sse-app-1:8000
+
+      # Option 3: Use host machine (if backend running locally)
+      # - VITE_API_BASE_URL=http://host.docker.internal:8000
+
+      # NETWORKS
+      # --------
+      # Connect to external SSE network to access backend services
+    networks:
+      - sse-network
+
+    # HEALTH CHECK
+    # ------------
+    # Verify dashboard is responding
+    healthcheck:
+      test: [ "CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # RESTART POLICY
+    # --------------
+    # Automatically restart unless explicitly stopped
+    restart: unless-stopped
+
+# ============================================================================
+# NETWORKS
+# ============================================================================
+# Use the external SSE network created by the backend docker-compose
+# This allows the dashboard to communicate with backend services
+
+networks:
+  sse-network:
+    external: true
+    name: sse-network
+
+# ============================================================================
+# USAGE NOTES
+# ============================================================================
+#
+# FIRST TIME SETUP:
+# -----------------
+# 1. Ensure backend is running:
+#    cd ..
+#    docker-compose up -d
+#
+# 2. Start dashboard:
+#    docker-compose up -d
+#
+# 3. Access dashboard:
+#    http://localhost:3001
+#
+# TROUBLESHOOTING:
+# ----------------
+# If you get "network sse-network not found":
+# - Make sure backend is running: cd .. && docker-compose ps
+# - Check network exists: docker network ls | grep sse-network
+#
+# If dashboard can't connect to API:
+# - Check VITE_API_BASE_URL environment variable
+# - Verify backend is accessible: docker exec performance-dashboard wget http://sse-nginx
+# - Check backend CORS settings allow dashboard origin
+#
+# DEVELOPMENT MODE:
+# -----------------
+# To run dashboard in development mode with hot reload:
+#   npm run dev
+#
+# This will start the Vite dev server on http://localhost:5173
+# No Docker needed for development!
+#
+# ============================================================================
