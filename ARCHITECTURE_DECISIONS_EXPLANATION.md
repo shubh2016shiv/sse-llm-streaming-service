@@ -729,6 +729,30 @@ The connection pool implements **four health states** with automatic monitoring:
 │ ⚠️  Consider scaling horizontally                                │
 │ ✓ All requests still accepted                                   │
 └─────────────────────────────────────────────────────────────────┘
+
+### 3.4 Three-Layer Defense Strategy
+
+To guarantee resilience under extreme load, the system implements a **Three-Layer Defense** strategy. This ensures that no single point of failure exists and that user feedback remains positive even during capacity crunches.
+
+#### Layer 1: NGINX Load Balancer
+- **Mechanism**: `least_conn` algorithm.
+- **Role**: Distributes incoming traffic across all available FastAPI instances.
+- **Benefit**: Prevents any single instance from becoming a hot spot.
+
+#### Layer 2: Connection Pool Manager (Distributed)
+- **Mechanism**: Redis-backed counters.
+- **Role**: Enforces global (10,000) and per-user (3) limits.
+- **Benefit**: Protects the cluster from exhaustion and "noisy neighbors".
+
+#### Layer 3: Distributed Queue Failover (The Final Safety Net)
+- **Mechanism**: Redis Streams + Pub/Sub.
+- **Role**: When Layer 2 limits are hit, requests are **queued** instead of rejected.
+- **Flow**:
+    1.  **Failover**: `UserConnectionLimitError` triggers queue logic.
+    2.  **Pub/Sub**: Instance A subscribes to a result channel.
+    3.  **Processing**: Instance B (Worker) picks up the job and *publishes* stream chunks.
+    4.  **Delivery**: Instance A receives chunks and streams them to the user.
+- **Benefit**: **Zero 429/503 Errors**. Users see a slightly longer "Thinking..." state, but the request *always* succeeds.
                          ↓ (90% threshold crossed)
 ┌─────────────────────────────────────────────────────────────────┐
 │ CRITICAL (90-100% capacity = 9,000-10,000 connections)          │
@@ -740,8 +764,9 @@ The connection pool implements **four health states** with automatic monitoring:
                          ↓ (100% threshold reached)
 ┌─────────────────────────────────────────────────────────────────┐
 │ EXHAUSTED (100% capacity = 10,000 connections)                  │
-│ ❌ New connections rejected with HTTP 503                        │
-│ ✓ Existing connections continue processing normally             │
+│ ✅ Layer 3 Failover: Queued to Redis for background processing   │
+│ ✅ Zero 429 Errors sent to frontend                              │
+└─────────────────────────────────────────────────────────────────┘│ ✓ Existing connections continue processing normally             │
 │ ✓ Backpressure applied to clients (retry with exponential backoff) │
 │ ✓ Server remains stable and responsive                          │
 └─────────────────────────────────────────────────────────────────┘

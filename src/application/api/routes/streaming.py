@@ -105,9 +105,7 @@ class StreamRequestModel(BaseModel):
     )
 
     # Required field: must be a known model
-    model: str = Field(
-        description="LLM model identifier (e.g., gpt-4, claude-3)"
-    )
+    model: str = Field(description="LLM model identifier (e.g., gpt-4, claude-3)")
 
     # Optional field that can be None (using Python 3.10+ union syntax)
     provider: str | None = Field(
@@ -170,10 +168,7 @@ class StreamRequestModel(BaseModel):
 
 @router.post("")
 async def create_stream(
-    request: Request,
-    body: StreamRequestModel,
-    orchestrator: OrchestratorDep,
-    user_id: UserIdDep
+    request: Request, body: StreamRequestModel, orchestrator: OrchestratorDep, user_id: UserIdDep
 ):
     """
     Create an SSE streaming connection for real-time LLM responses.
@@ -285,36 +280,33 @@ async def create_stream(
     except ConnectionPoolExhaustedError as e:
         # Pool is exhausted - return 503 Service Unavailable
         logger.warning(
-            "Connection pool exhausted - returning 503",
-            thread_id=thread_id,
-            user_id=user_id
+            "Connection pool exhausted - returning 503", thread_id=thread_id, user_id=user_id
         )
         return JSONResponse(
             status_code=503,
             content={
                 "error": "service_unavailable",
                 "message": "Server at capacity. Please try again later.",
-                "details": e.details
+                "details": e.details,
             },
-            headers={HEADER_THREAD_ID: thread_id}
+            headers={HEADER_THREAD_ID: thread_id},
         )
     except UserConnectionLimitError as e:
         # User exceeded per-user limit - return 429 Too Many Requests
         logger.warning(
-            "User connection limit exceeded - returning 429",
-            thread_id=thread_id,
-            user_id=user_id
+            "User connection limit exceeded - returning 429", thread_id=thread_id, user_id=user_id
         )
         return JSONResponse(
             status_code=429,
             content={
                 "error": "too_many_connections",
                 "message": (
-                    f"Too many concurrent connections. Maximum {pool_manager.max_per_user} allowed."
+                    f"Too many concurrent connections. "
+                    f"Maximum {pool_manager.max_per_user} allowed."
                 ),
-                "details": e.details
+                "details": e.details,
             },
-            headers={HEADER_THREAD_ID: thread_id}
+            headers={HEADER_THREAD_ID: thread_id},
         )
 
     # ========================================================================
@@ -427,12 +419,13 @@ async def create_stream(
 
             # Log detailed error for debugging (includes full exception and traceback)
             import traceback
+
             logger.error(
                 f"Unexpected error in stream: {type(e).__name__}: {str(e)}",
                 thread_id=thread_id,
                 error_type=type(e).__name__,
                 error_message=str(e),
-                traceback=traceback.format_exc()
+                traceback=traceback.format_exc(),
             )
 
         finally:

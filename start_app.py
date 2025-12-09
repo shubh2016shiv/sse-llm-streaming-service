@@ -32,9 +32,7 @@ def main():
     # Initialize infrastructure manager
     manager = InfrastructureManager(project_root)
 
-    # Step 1: Check if infrastructure is running
-    print("Step 1: Checking infrastructure status...")
-    manager.status()
+    # Infrastructure status will be checked during start/stop operations
 
     # Step 2: Stop existing infrastructure to ensure clean state
     print("\nStep 2: Stopping existing infrastructure for clean restart...")
@@ -76,7 +74,7 @@ def main():
             host=settings.app.API_HOST,
             port=settings.app.API_PORT,
             reload=settings.app.ENVIRONMENT == "development",
-            log_level=settings.logging.LOG_LEVEL.lower()
+            log_level=settings.logging.LOG_LEVEL.lower(),
         )
     except KeyboardInterrupt:
         print("\n\n[!] Shutting down gracefully...")
@@ -84,6 +82,7 @@ def main():
     except Exception as e:
         print(f"\n[X] Failed to start application: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)
 

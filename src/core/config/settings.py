@@ -395,6 +395,34 @@ class Settings(BaseSettings):
         default=1000, description="Max requests per time window for load shedding"
     )
 
+    # =========================================================================
+    # QUEUE FAILOVER SETTINGS (LAYER 3 DEFENSE)
+    # =========================================================================
+    # When connection pool is exhausted, requests are queued to Redis/Kafka
+    # instead of returning 429 errors. The consumer worker processes them
+    # when capacity becomes available.
+
+    QUEUE_FAILOVER_ENABLED: bool = Field(
+        default=True,
+        description="Enable queue failover as third layer of defense"
+    )
+    QUEUE_FAILOVER_TIMEOUT_SECONDS: int = Field(
+        default=30,
+        description="Maximum time request can wait in queue before timeout"
+    )
+    QUEUE_FAILOVER_MAX_RETRIES: int = Field(
+        default=5,
+        description="Max retry attempts for processing queued request"
+    )
+    QUEUE_FAILOVER_BASE_DELAY_MS: int = Field(
+        default=100,
+        description="Base delay for exponential backoff in milliseconds"
+    )
+    QUEUE_FAILOVER_MAX_DELAY_MS: int = Field(
+        default=5000,
+        description="Maximum delay for exponential backoff in milliseconds"
+    )
+
     # Kafka-specific settings
     KAFKA_BOOTSTRAP_SERVERS: str = Field(
         default="localhost:9092", description="Kafka bootstrap servers"

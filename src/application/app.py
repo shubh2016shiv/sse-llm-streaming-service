@@ -108,6 +108,24 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Health checker ready")
 
+        # ====================================================================
+        # LAYER 3: Start Queue Consumer Worker
+        # ====================================================================
+        # The consumer worker processes streaming requests that were queued
+        # when the connection pool was exhausted. This is part of the
+        # three-layer defense system: NGINX → Connection Pool → Queue.
+        # Use settings from line 48 - already initialized
+
+        if getattr(settings, "QUEUE_FAILOVER_ENABLED", True):
+            from src.core.resilience.queue_consumer_worker import (
+                start_queue_consumer_worker,
+            )
+
+            await start_queue_consumer_worker()
+            logger.info("Queue consumer worker started (Layer 3 defense)")
+        else:
+            logger.info("Queue failover disabled - worker not started")
+
         logger.info("Application startup complete")
 
         yield
@@ -115,6 +133,17 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("Shutting down application")
+
+        # Stop queue consumer worker (Layer 3)
+        try:
+            from src.core.resilience.queue_consumer_worker import (
+                stop_queue_consumer_worker,
+            )
+
+            await stop_queue_consumer_worker()
+            logger.info("Queue consumer worker stopped")
+        except Exception as e:
+            logger.warning(f"Error stopping queue worker: {e}")
 
         # Cleanup
         await close_cache()
@@ -169,8 +198,7 @@ def create_app() -> FastAPI:
     from src.application.api.middleware.error_handler import ErrorHandlingMiddleware
 
     app.add_middleware(
-        ErrorHandlingMiddleware,
-        include_traceback=(settings.app.ENVIRONMENT == "development")
+        ErrorHandlingMiddleware, include_traceback=(settings.app.ENVIRONMENT == "development")
     )
 
     # 2. CORS middleware (adds CORS headers to all responses)

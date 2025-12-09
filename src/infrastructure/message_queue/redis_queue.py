@@ -22,8 +22,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from aioresilience import BasicLoadShedder
-from aioresilience.config import LoadSheddingConfig
+# NOTE: aioresilience package doesn't exist in PyPI - load shedding temporarily disabled
+# from aioresilience import BasicLoadShedder
+# from aioresilience.config import LoadSheddingConfig
 from redis.exceptions import RedisError
 from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential_jitter
 
@@ -73,15 +74,14 @@ class RedisQueue(MessageQueue):
         self.backpressure_base_delay = self.settings.QUEUE_BACKPRESSURE_BASE_DELAY
         self.backpressure_max_delay = self.settings.QUEUE_BACKPRESSURE_MAX_DELAY
 
-        # Load shedding (if enabled)
+        # Load shedding (temporarily disabled - aioresilience package not available)
         self.load_shedder = None
-        # Load shedding (if enabled)
-        self.load_shedder = None
-        if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
-            ls_config = LoadSheddingConfig(
-                max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
-            )
-            self.load_shedder = BasicLoadShedder(config=ls_config)
+        # TODO: Implement custom load shedding or find alternative library
+        # if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
+        #     ls_config = LoadSheddingConfig(
+        #         max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
+        #     )
+        #     self.load_shedder = BasicLoadShedder(config=ls_config)
 
         logger.info(
             "Redis Queue initialized",
@@ -117,11 +117,14 @@ class RedisQueue(MessageQueue):
             logger.info("Consumer group created", stage="QUEUE.1", group=self.group_name)
         except RedisError as e:
             if "BUSYGROUP" in str(e):
-                # Group already exists, which is fine
-                pass
+                # Group already exists, which is fine - this is idempotent
+                logger.info(
+                    "Consumer group already exists (OK)", stage="QUEUE.1", group=self.group_name
+                )
             else:
+                # Actual error - log and raise
                 logger.error("Failed to create consumer group", stage="QUEUE.ERR", error=str(e))
-            raise QueueError(f"Failed to create consumer group: {e}")
+                raise QueueError(f"Failed to create consumer group: {e}")
 
         self._initialized = True
 

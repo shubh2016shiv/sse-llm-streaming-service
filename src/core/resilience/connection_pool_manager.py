@@ -201,8 +201,10 @@ class ConnectionPoolManager:
                 state = await self.get_pool_state()
 
                 logger.info(
-                    "Connection acquired from pool "
-                    f"(utilization: {utilization:.1f}%, state: {state})",
+                    (
+                        f"Connection acquired from pool "
+                        f"(utilization: {utilization:.1f}%, state: {state})"
+                    ),
                     stage="CP.1.4",
                     thread_id=thread_id,
                     user_id=user_id,
@@ -313,7 +315,8 @@ class ConnectionPoolManager:
             total_count = await self._get_total_count()
             utilization = (
                 (total_count / self.max_connections) * 100
-                if self.max_connections > 0 else 0
+                if self.max_connections > 0
+                else 0
             )
             state = await self.get_pool_state()
 

@@ -416,6 +416,7 @@ class InfrastructureManager:
         checks = [
             ("Docker availability", self._check_docker),
             ("Docker Compose file", self._check_compose_file),
+            ("SSL certificates", self._check_and_generate_ssl_certs),
         ]
 
         for name, check_fn in checks:
@@ -459,6 +460,82 @@ class InfrastructureManager:
         except yaml.YAMLError as e:
             self.logger.error(f"Invalid YAML: {e}")
             return False
+
+    def _check_and_generate_ssl_certs(self) -> bool:
+        """Check for SSL certificates and generate if missing."""
+        ssl_dir = self.project_root / "infrastructure" / "nginx" / "ssl"
+        key_file = ssl_dir / "localhost.key"
+        cert_file = ssl_dir / "localhost.crt"
+
+        # Check if certificates already exist
+        if key_file.exists() and cert_file.exists():
+            self.logger.debug("SSL certificates found")
+            return True
+
+        self.logger.info("SSL certificates not found, generating automatically...")
+
+        # Use the existing manage_certs.py script for cross-platform generation
+        manage_certs_script = ssl_dir / "manage_certs.py"
+
+        if not manage_certs_script.exists():
+            self.logger.error(f"Certificate generation script not found: {manage_certs_script}")
+            return False
+
+        try:
+            # Run the certificate generation script non-interactively
+            # We'll use the platform-specific script directly to avoid prompts
+            system = subprocess.run(
+                ["python", "--version"],
+                capture_output=True,
+                text=True
+            ).returncode == 0
+
+            if not system:
+                self.logger.error("Python is not available")
+                return False
+
+            # Determine platform and run appropriate script
+            import platform as plat
+            if plat.system() == "Windows":
+                script_path = ssl_dir / "generate-cert.ps1"
+                self.logger.info("Generating SSL certificates (Windows)...")
+                cmd = ["powershell", "-ExecutionPolicy", "Bypass", "-File", str(script_path)]
+            else:
+                script_path = ssl_dir / "generate-cert.sh"
+                self.logger.info("Generating SSL certificates (Linux/macOS)...")
+                # Make script executable
+                import os
+                os.chmod(script_path, 0o755)
+                cmd = ["bash", str(script_path)]
+
+            # Run generation script
+            result = subprocess.run(
+                cmd,
+                cwd=str(ssl_dir),
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+
+            if result.returncode != 0:
+                self.logger.error(f"Certificate generation failed: {result.stderr}")
+                return False
+
+            # Verify certificates were created
+            if not (key_file.exists() and cert_file.exists()):
+                self.logger.error("Certificate generation completed but files not found")
+                return False
+
+            self.logger.info("SSL certificates generated successfully")
+            return True
+
+        except subprocess.TimeoutExpired:
+            self.logger.error("Certificate generation timed out")
+            return False
+        except Exception as e:
+            self.logger.error(f"Failed to generate SSL certificates: {e}")
+            return False
+
 
     # ------------------------------------------------------------------------
     # Service Lifecycle Management

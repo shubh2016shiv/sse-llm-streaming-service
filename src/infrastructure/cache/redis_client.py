@@ -551,6 +551,44 @@ class RedisClient:
         return self.client.pipeline()
 
     # =========================================================================
+    # Pub/Sub Operations (for distributed messaging)
+    # =========================================================================
+
+    async def publish(self, channel: str, message: str) -> int:
+        """
+        Publish a message to a channel.
+
+        Args:
+            channel: Channel name
+            message: Message payload
+
+        Returns:
+            int: Number of subscribers that received the message
+        """
+        try:
+            return await self.client.publish(channel, message)
+        except RedisError as e:
+            logger.error(
+                "Redis PUBLISH failed",
+                stage="REDIS.PUB",
+                channel=channel,
+                error=str(e)
+            )
+            raise CacheKeyError(
+                message=f"Redis PUBLISH failed: {e}",
+                details={"channel": channel}
+            )
+
+    def pubsub(self) -> redis.client.PubSub:
+        """
+        Create a PubSub instance.
+
+        Returns:
+            PubSub: Redis PubSub object
+        """
+        return self.client.pubsub()
+
+    # =========================================================================
     # Health Check
     # =========================================================================
 

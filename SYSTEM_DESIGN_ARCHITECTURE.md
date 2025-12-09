@@ -139,6 +139,20 @@ The failover logic is executed within the provider selection stage (STAGE-4) of 
 
 ## 5. The Streaming Data Flow
 
+### 4.4 Distributed Queue Failover (Layer 3 Defense)
+
+To ensure zero dropped requests during high load, the system implements a **Distributed Queue Failover** mechanism as the third layer of defense.
+
+When the connection pool is exhausted (Layer 2), instead of rejecting the request with a 429 error, the request is:
+1.  **Queued** to a Redis Stream (`streaming_requests_failover`).
+2.  **subscribed** to a Redis Pub/Sub channel (`queue:results:{id}`).
+3.  **Processed** by a background `QueueConsumerWorker` on any available instance.
+4.  **Streamed** back to the original instance via Redis Pub/Sub.
+
+This architecture ensures that even if local resources are full, the distributed cluster can absorb the load and process it asynchronously, maintaining a "Streaming" user experience without errors.
+
+## 5. The Streaming Data Flow
+
 The lifecycle of a streaming request is a carefully orchestrated pipeline designed to minimize latency and maximize user perceived performance. The pipeline is implemented in the `StreamRequestLifecycle.stream` method and follows a six-stage process: validation, cache lookup, rate limit verification, provider selection, LLM streaming, and cleanup.
 
 The system implements request prioritization to ensure fair resource allocation and improved quality of service for premium users. Requests are assigned one of three priority levels: HIGH (premium users, critical operations), NORMAL (standard users, default), or LOW (background tasks, non-urgent operations). The priority is determined automatically based on user tier (premium users receive HIGH priority) or can be explicitly set via the request model. High-priority requests are processed before normal-priority requests, which are processed before low-priority requests, while maintaining fairness within each priority level through FIFO ordering. This prioritization enables better resource allocation and ensures that premium users receive superior service quality during high-load periods.

@@ -1,9 +1,80 @@
 import axios from 'axios';
 
-// API Base URL - configurable via environment variable
-// Development: http://localhost:8000/api/v1 (default - includes API prefix)
-// Docker: Set via VITE_API_BASE_URL in docker-compose.yml
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
+// ===========================================================================
+// 🔄 LOAD BALANCER INTEGRATION - CRITICAL ARCHITECTURE
+// ===========================================================================
+// 
+// WHY LOAD BALANCING MATTERS:
+// ---------------------------
+// This application uses NGINX as a load balancer to distribute requests
+// across multiple FastAPI backend instances. This provides:
+// - HIGH AVAILABILITY: If one instance fails, others continue serving
+// - HORIZONTAL SCALING: Add more instances to handle increased load
+// - DISTRIBUTED CONNECTION POOL: Each instance has separate limits
+// 
+// ARCHITECTURE OVERVIEW:
+// ----------------------
+//   Performance Dashboard (UI) → NGINX Load Balancer → Backend Instances
+//   http://localhost:3001      → https://localhost   → app-1:8000 (33%)
+//                                                     → app-2:8000 (33%)
+//                                                     → app-3:8000 (34%)
+//
+// ===========================================================================
+// ⚙️ API BASE URL CONFIGURATION
+// ===========================================================================
+//
+// PRODUCTION/DOCKER SETUP (RECOMMENDED):
+// ---------------------------------------
+// URL: https://localhost/api/v1
+// 
+// Flow: UI → NGINX (port 443) → Load Balanced to 3 FastAPI instances
+// 
+// Benefits:
+// ✅ Requests distributed across 3 instances
+// ✅ SSL/TLS encryption via NGINX
+// ✅ Connection pool capacity: 3 connections per user × 3 instances = 9 total
+// ✅ True horizontal scaling
+// ✅ Production-like environment
+//
+// How to run:
+// 1. python infrastructure/manage.py start --all
+// 2. Access dashboard: http://localhost:3001
+// 3. All API calls automatically routed through NGINX
+//
+// DEVELOPMENT SETUP (LOCAL DEBUGGING):
+// -------------------------------------
+// URL: http://localhost:8000/api/v1
+//
+// Flow: UI → Direct to single FastAPI instance (bypasses NGINX)
+//
+// Benefits:
+// ✅ Can use debugger on local instance
+// ✅ Faster iteration (no Docker restart needed)
+// ✅ Simpler logging (direct console output)
+//
+// Limitations:
+// ❌ NO load balancing (single instance only)
+// ❌ NO SSL encryption
+// ❌ Connection pool capacity limited to 3 per user
+// ❌ Not representative of production
+//
+// How to run:
+// 1. python start_app.py
+// 2. Update this URL to: 'http://localhost:8000/api/v1'
+// 3. Restart dashboard
+//
+// ===========================================================================
+// 🎯 CURRENT CONFIGURATION
+// ===========================================================================
+//
+// The URL below determines which mode the dashboard operates in:
+// - https://localhost/api/v1      → Production mode (load balanced)
+// - http://localhost:8000/api/v1  → Development mode (single instance)
+//
+// Environment Variable Override:
+// Set VITE_API_BASE_URL to override default (useful for Docker deployment)
+//
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'https://localhost/api/v1';
 
 export const api = axios.create({
     baseURL: API_BASE_URL,

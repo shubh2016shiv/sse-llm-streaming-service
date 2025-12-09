@@ -4,9 +4,10 @@ from typing import Any
 
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 from aiokafka.errors import KafkaError
-from aioresilience import BasicLoadShedder
-from aioresilience.config import LoadSheddingConfig
 
+# NOTE: aioresilience package doesn't exist in PyPI - load shedding temporarily disabled
+# from aioresilience import BasicLoadShedder
+# from aioresilience.config import LoadSheddingConfig
 from src.core.config.settings import get_settings
 from src.core.exceptions import QueueError, QueueFullError
 from src.core.interfaces.message_queue import MessageQueue, QueueMessage
@@ -33,13 +34,14 @@ class KafkaQueue(MessageQueue):
         self.buffer_memory = self.settings.KAFKA_BUFFER_MEMORY
         self.max_in_flight_requests = self.settings.KAFKA_MAX_IN_FLIGHT_REQUESTS
 
-        # Load shedding (if enabled)
+        # Load shedding (temporarily disabled - aioresilience package not available)
         self.load_shedder = None
-        if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
-            ls_config = LoadSheddingConfig(
-                max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
-            )
-            self.load_shedder = BasicLoadShedder(config=ls_config)
+        # TODO: Implement custom load shedding or find alternative library
+        # if self.settings.QUEUE_LOAD_SHEDDING_ENABLED:
+        #     ls_config = LoadSheddingConfig(
+        #         max_requests=self.settings.QUEUE_LOAD_SHEDDING_MAX_REQUESTS
+        #     )
+        #     self.load_shedder = BasicLoadShedder(config=ls_config)
 
         self.producer: AIOKafkaProducer | None = None
         self.consumer: AIOKafkaConsumer | None = None
