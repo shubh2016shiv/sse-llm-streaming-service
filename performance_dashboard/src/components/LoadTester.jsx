@@ -3,7 +3,11 @@ import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { Play, Square, Activity, Users, Clock, AlertCircle, TrendingUp } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Import API_BASE_URL from api.js to ensure consistency
+// This will use the same base URL as other API calls (includes /api/v1 prefix)
+import { api } from '../api';
+
+const API_BASE_URL = api.defaults.baseURL;
 
 const LoadTester = () => {
     const [running, setRunning] = useState(false);
@@ -77,6 +81,8 @@ const LoadTester = () => {
                 },
                 body: JSON.stringify({
                     query: "Write a short poem about performance testing.",
+                    model: "gpt-3.5-turbo",  // Required field
+                    provider: "fake",  // Use fake provider for testing
                     stream: true
                 }),
                 signal: abortControllerRef.current.signal,

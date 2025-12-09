@@ -4,6 +4,7 @@ A modern, real-time performance monitoring dashboard for the SSE Streaming Micro
 
 ## Features
 
+- **Backend Health Monitoring**: Real-time connection status with automatic 5-second polling
 - **Real-time Monitoring**: View execution statistics by processing stage (p50, p90, p95, p99 percentiles)
 - **Configuration Management**: Update runtime settings (fake LLM, caching, queue type)
 - **Load Testing**: Run concurrent load tests with configurable parameters
@@ -34,32 +35,64 @@ Backend API (app-1, app-2, app-3)
 
 ### Option 1: Docker Deployment (Recommended)
 
-1. **Ensure backend is running:**
-   ```bash
-   cd ..
-   docker-compose ps
-   ```
-   All services should show "Up" status.
+#### Step 1: Start the Backend
 
-2. **Start the dashboard:**
-   ```bash
-   docker-compose up -d
-   ```
+**IMPORTANT**: The dashboard requires the SSE backend to be running first.
 
-3. **Access the dashboard:**
-   ```
-   http://localhost:3001
-   ```
+From the **project root directory**, run:
+```bash
+python start_app.py
+```
 
-4. **View logs:**
-   ```bash
-   docker-compose logs -f
-   ```
+This will start all necessary backend services (NGINX, FastAPI instances, Redis).
 
-5. **Stop the dashboard:**
-   ```bash
-   docker-compose down
-   ```
+Wait for the message: `"✓ All services are healthy!"`
+
+#### Step 2: Start the Dashboard
+
+From the **performance_dashboard directory**, run:
+
+**Windows:**
+```powershell
+.\start_dashboard.ps1
+```
+
+**Linux/Mac:**
+```bash
+./start_dashboard.sh
+```
+
+The script will:
+1. Check if Docker is running
+2. Verify backend is accessible
+3. Build and start the dashboard container
+
+If the backend is not running, the script will:
+- Display clear instructions to start it
+- Ask if you want to continue anyway (dashboard will show "Disconnected" status)
+
+#### Step 3: Access the Dashboard
+
+```
+http://localhost:3001
+```
+
+**Health Monitoring**: The dashboard automatically polls the backend every 5 seconds and displays connection status in the header:
+- 🟢 **Connected** - Backend is healthy
+- 🔴 **Disconnected** - Backend is unreachable
+- 🟡 **Checking...** - Health check in progress
+
+#### Step 4: View Logs
+
+```bash
+docker-compose logs -f
+```
+
+#### Step 5: Stop the Dashboard
+
+```bash
+docker-compose down
+```
 
 ### Option 2: Local Development
 
@@ -105,14 +138,49 @@ Edit `docker-compose.yml` to change the API endpoint:
 ```yaml
 environment:
   # Option 1: Use load balancer (recommended)
-  - VITE_API_BASE_URL=http://sse-nginx
+  - VITE_API_BASE_URL=http://sse-nginx/api/v1
 
   # Option 2: Direct to specific app instance
-  - VITE_API_BASE_URL=http://sse-app-1:8000
+  - VITE_API_BASE_URL=http://sse-app-1:8000/api/v1
 
   # Option 3: Use host machine
-  - VITE_API_BASE_URL=http://host.docker.internal:8000
+  - VITE_API_BASE_URL=http://host.docker.internal:8000/api/v1
 ```
+
+### Adjusting Polling Intervals
+
+The dashboard polls the backend at regular intervals. You can adjust these intervals by editing the source files:
+
+#### Backend Health Check Polling
+
+**File**: `src/components/BackendStatusIndicator.jsx`  
+**Default**: 5 seconds  
+**Line**: ~30
+
+```javascript
+const POLLING_INTERVAL_MS = 5000; // 5 seconds
+```
+
+Change this value to adjust how often the dashboard checks backend connectivity.
+
+#### Metrics Chart Polling
+
+**File**: `src/components/MetricsChart.jsx`  
+**Default**: 10 seconds  
+**Line**: ~12
+
+```javascript
+const POLLING_INTERVAL_MS = 10000; // 10 seconds
+```
+
+Change this value to adjust how often execution statistics are fetched.
+
+> [!NOTE]
+> After changing polling intervals, you must rebuild the dashboard container:
+> ```bash
+> docker-compose down
+> docker-compose up -d --build
+> ```
 
 ## Docker Configuration
 
@@ -152,6 +220,7 @@ The dashboard consumes the following SSE backend endpoints:
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
+| `/health` | GET | Backend health check (polled every 5s) |
 | `/admin/execution-stats` | GET | Fetch execution statistics by stage |
 | `/admin/config` | GET | Retrieve current configuration |
 | `/admin/config` | PUT | Update runtime configuration |
@@ -177,51 +246,53 @@ await updateConfig({
 });
 ```
 
-## Troubleshooting
-
 ### Dashboard can't connect to backend
 
 **Symptoms:**
-- Network errors in browser console
-- API requests fail
+- Status indicator shows "Disconnected" (red)
+- API requests fail in browser console
 - "Failed to fetch" errors
 
 **Solutions:**
 
-1. **Check backend is running:**
+1. **Start the backend:**
+   ```bash
+   cd ..
+   python start_app.py
+   ```
+   Dashboard will auto-reconnect within 5 seconds.
+
+2. **Verify backend health manually:**
+   ```bash
+   curl http://localhost/health
+   ```
+
+3. **Check backend status:**
    ```bash
    cd ..
    docker-compose ps
    ```
 
-2. **Verify network exists:**
-   ```bash
-   docker network ls | grep sse-network
-   ```
-
-3. **Test connectivity from dashboard container:**
+4. **Test connectivity from dashboard container:**
    ```bash
    docker exec performance-dashboard wget -O- http://sse-nginx/health
    ```
 
-4. **Check VITE_API_BASE_URL:**
-   ```bash
-   docker-compose config | grep VITE_API_BASE_URL
-   ```
+### Backend not running
 
-### Network not found error
-
-**Error:**
-```
-network sse-network declared as external, but could not be found
-```
+**Symptoms:**
+- Dashboard shows "Backend: Disconnected" status
+- Startup script displays "BACKEND NOT RUNNING" message
+- Network errors in browser console
 
 **Solution:**
-Start the SSE backend first to create the network:
+Start the backend from the project root:
 ```bash
 cd ..
-docker-compose up -d
+python start_app.py
 ```
+
+The dashboard will automatically detect the connection within 5 seconds.
 
 ### CORS errors
 
@@ -258,20 +329,23 @@ npm install --legacy-peer-deps
 ```
 performance_dashboard/
 ├── src/
-│   ├── components/         # React components
-│   │   ├── ConfigPanel.jsx
-│   │   ├── LoadTestPanel.jsx
-│   │   └── StatsPanel.jsx
-│   ├── api.js             # API client
-│   ├── App.jsx            # Main app component
-│   ├── main.jsx           # Entry point
-│   └── index.css          # Global styles
-├── public/                # Static assets
-├── Dockerfile             # Multi-stage Docker build
-├── docker-compose.yml     # Standalone deployment
-├── nginx.conf            # Nginx configuration
-├── vite.config.js        # Vite configuration
-└── package.json          # Dependencies
+│   ├── components/              # React components
+│   │   ├── BackendStatusIndicator.jsx  # Real-time health monitor
+│   │   ├── ConfigurationPanel.jsx
+│   │   ├── LoadTester.jsx
+│   │   └── MetricsChart.jsx
+│   ├── api.js                  # API client + health checks
+│   ├── App.jsx                 # Main app component
+│   ├── main.jsx                # Entry point
+│   └── index.css               # Global styles
+├── public/                     # Static assets
+├── Dockerfile                  # Multi-stage Docker build
+├── docker-compose.yml          # Standalone deployment
+├── nginx.conf                  # Nginx configuration
+├── start_dashboard.ps1         # Windows startup script
+├── start_dashboard.sh          # Linux/Mac startup script
+├── vite.config.js              # Vite configuration
+└── package.json                # Dependencies
 ```
 
 ### Adding New Features

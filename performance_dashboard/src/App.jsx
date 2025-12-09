@@ -2,6 +2,7 @@ import React from 'react';
 import ConfigurationPanel from './components/ConfigurationPanel';
 import LoadTester from './components/LoadTester';
 import MetricsChart from './components/MetricsChart';
+import BackendStatusIndicator from './components/BackendStatusIndicator';
 
 function App() {
   return (
@@ -11,9 +12,14 @@ function App() {
           <h1 className="text-4xl font-black mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
             Performance Experiments Dashboard
           </h1>
-          <p className="text-text-secondary text-lg">
+          <p className="text-text-secondary text-lg mb-4">
             Compare architectural patterns for High-Concurrency SSE Streaming
           </p>
+
+          {/* Backend Status Indicator */}
+          <div className="flex justify-center">
+            <BackendStatusIndicator />
+          </div>
         </header>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

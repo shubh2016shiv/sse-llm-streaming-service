@@ -35,6 +35,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Pass API base URL as build argument
+        # This gets embedded into the built JavaScript at build time
+        VITE_API_BASE_URL: http://host.docker.internal:8000/api/v1
     container_name: performance-dashboard
 
     # PORT MAPPING
@@ -48,13 +52,21 @@ services:
     # ---------------------
     # Configure API endpoint dynamically
     environment:
-      # Option 1: Use nginx load balancer on external network (recommended)
-      - VITE_API_BASE_URL=http://sse-nginx
-      # Option 2: Direct to app instance (bypass load balancer)
-      # - VITE_API_BASE_URL=http://sse-app-1:8000
+      # Option 1: Backend running locally (via python start_app.py) - DEFAULT
+      # Use host.docker.internal to reach host machine from Docker container
+      - VITE_API_BASE_URL=http://host.docker.internal:8000/api/v1
+      # Option 2: Backend running in Docker (via docker-compose in parent dir)
+      # Use nginx load balancer on external network
+      # - VITE_API_BASE_URL=http://sse-nginx/api/v1
 
-      # Option 3: Use host machine (if backend running locally)
-      # - VITE_API_BASE_URL=http://host.docker.internal:8000
+      # Option 3: Direct to specific app instance (bypass load balancer)
+      # - VITE_API_BASE_URL=http://sse-app-1:8000/api/v1
+
+      # IMPORTANT: All endpoints are prefixed with /api/v1
+      # - Health check: /api/v1/health
+      # - Admin stats: /api/v1/admin/execution-stats
+      # - Config: /api/v1/admin/config
+      # - Streaming: /api/v1/stream
 
       # NETWORKS
       # --------

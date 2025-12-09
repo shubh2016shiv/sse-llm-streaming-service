@@ -7,8 +7,12 @@ const MetricsChart = () => {
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
 
+    // Polling interval in milliseconds (configurable)
+    // Adjust this value to change how often metrics are fetched
+    const POLLING_INTERVAL_MS = 10000; // 10 seconds
+
     useEffect(() => {
-        const interval = setInterval(fetchStats, 2000);
+        const interval = setInterval(fetchStats, POLLING_INTERVAL_MS);
         fetchStats();
         return () => clearInterval(interval);
     }, []);

@@ -2,9 +2,261 @@
 
 ## Overview
 
-The `resilience` module provides fault tolerance and reliability mechanisms for the SSE streaming microservice, implementing the **Circuit Breaker** and **Rate Limiting** patterns to prevent cascade failures and protect against overload.
+The `resilience` module provides fault tolerance and reliability mechanisms for the SSE streaming microservice, implementing the **Connection Pool Management**, **Circuit Breaker**, and **Rate Limiting** patterns to prevent cascade failures, enforce backpressure, and protect against overload.
 
 ## Components
+
+### Connection Pool Manager (`connection_pool_manager.py`)
+
+**Purpose**: Enforce connection limits and provide backpressure to prevent server overload during high-concurrency streaming workloads
+
+**Pattern**: Distributed connection pool with per-user limits and graceful degradation
+
+**Key Classes**:
+- `ConnectionPoolManager`: Centralized pool manager with Redis-backed distributed coordination
+- `ConnectionState`: Health state enum (HEALTHY, DEGRADED, CRITICAL, EXHAUSTED)
+
+**Critical Architecture**:
+
+The Connection Pool Manager is a **foundational component** that protects the system from overload by enforcing strict connection limits. Unlike traditional connection pools that manage database connections, this pool manages **active SSE streaming connections** to prevent resource exhaustion.
+
+**Why This Matters**:
+- **Prevents Server Collapse**: Without connection limits, a surge of requests can exhaust memory, CPU, and network resources
+- **Fair Resource Allocation**: Per-user limits prevent a single user from monopolizing server capacity
+- **Graceful Degradation**: Returns proper HTTP 429/503 errors instead of crashing or timing out
+- **Distributed Coordination**: Works across multiple FastAPI instances using Redis for state synchronization
+
+**Connection Lifecycle**:
+```
+Client Request → Acquire Connection (CP.1) → Process Request → Release Connection (CP.4)
+                      ↓                                              ↑
+                Check Limits                                   Decrement Counters
+                (Global + Per-User)                           (Global + Per-User)
+```
+
+**States**:
+```
+HEALTHY (0-70% capacity)
+   ↓
+DEGRADED (70-90% capacity) - Warning logs, monitoring alerts
+   ↓
+CRITICAL (90-100% capacity) - High alert, approaching limit
+   ↓
+EXHAUSTED (100% capacity) - Reject new connections with 503
+```
+
+**Configuration**:
+```python
+MAX_CONCURRENT_CONNECTIONS = 10000    # Global limit across all users
+MAX_CONNECTIONS_PER_USER = 3          # Per-user limit
+CONNECTION_POOL_DEGRADED_THRESHOLD = 0.7   # 70% capacity
+CONNECTION_POOL_CRITICAL_THRESHOLD = 0.9   # 90% capacity
+```
+
+**Usage**:
+```python
+from src.core.resilience.connection_pool_manager import get_connection_pool_manager
+
+pool_manager = get_connection_pool_manager()
+
+# Acquire connection before processing request
+try:
+    await pool_manager.acquire_connection(user_id="user-123", thread_id="req-abc")
+    
+    # Process streaming request
+    async for chunk in stream_llm_response():
+        yield chunk
+        
+finally:
+    # Always release connection in finally block
+    await pool_manager.release_connection(thread_id="req-abc", user_id="user-123")
+```
+
+**Error Responses**:
+- **503 Service Unavailable**: Global pool exhausted (all 10,000 slots used)
+  ```json
+  {
+    "error": "service_unavailable",
+    "message": "Server at capacity. Please try again later.",
+    "details": {"current": 10000, "max": 10000}
+  }
+  ```
+  
+- **429 Too Many Requests**: User exceeded per-user limit (3 concurrent connections)
+  ```json
+  {
+    "error": "too_many_connections",
+    "message": "Too many concurrent connections. Maximum 3 allowed.",
+    "details": {"user_id": "user-123", "current": 3, "limit": 3}
+  }
+  ```
+
+**Distributed Coordination**:
+
+The pool uses Redis for distributed state management across multiple FastAPI instances:
+
+```python
+# Redis keys for distributed tracking
+connection_pool:total                    # Global connection count
+connection_pool:user:{user_id}           # Per-user connection count
+connection_pool:connections              # Set of active thread IDs
+```
+
+**Atomic Operations**:
+- `INCR connection_pool:total` - Increment global counter
+- `INCR connection_pool:user:{user_id}` - Increment user counter
+- `SADD connection_pool:connections {thread_id}` - Track active connection
+- `DECR` and `SREM` for release operations
+
+**Local Fallback**:
+
+If Redis is unavailable, the pool falls back to local in-memory counters:
+- Maintains eventual consistency when Redis recovers
+- Prevents complete service outage during Redis downtime
+- Logs warnings when using fallback mode
+
+**Monitoring and Observability**:
+
+```python
+# Get pool statistics
+stats = await pool_manager.get_stats()
+# Returns:
+{
+    "total_connections": 150,
+    "max_connections": 10000,
+    "utilization_percent": 1.5,
+    "state": "healthy",
+    "degraded_threshold": 7000,
+    "critical_threshold": 9000,
+    "redis_enabled": true
+}
+
+# Get current pool state
+state = await pool_manager.get_pool_state()
+# Returns: ConnectionState.HEALTHY | DEGRADED | CRITICAL | EXHAUSTED
+```
+
+**Stage-Based Logging**:
+
+All operations are logged with stage identifiers for precise tracking:
+
+```json
+// CP.1: Connection acquisition attempt
+{
+  "stage": "CP.1",
+  "user_id": "user-123",
+  "thread_id": "req-abc",
+  "event": "Attempting to acquire connection"
+}
+
+// CP.1.4: Successful acquisition
+{
+  "stage": "CP.1.4",
+  "thread_id": "req-abc",
+  "user_id": "user-123",
+  "total_connections": 151,
+  "user_connections": 2,
+  "utilization_percent": 1.51,
+  "pool_state": "healthy",
+  "event": "Connection acquired from pool"
+}
+
+// CP.4: Connection release
+{
+  "stage": "CP.4",
+  "thread_id": "req-abc",
+  "user_id": "user-123",
+  "event": "Releasing connection"
+}
+
+// CP.4.1: Release completion
+{
+  "stage": "CP.4.1",
+  "thread_id": "req-abc",
+  "total_connections": 150,
+  "utilization_percent": 1.5,
+  "pool_state": "healthy",
+  "event": "Connection released"
+}
+```
+
+**Performance Impact**:
+- **Overhead**: ~0.5ms per request (Redis INCR/DECR operations)
+- **Benefit**: Prevents server collapse, enables predictable capacity planning
+- **Trade-off**: Legitimate requests may be rejected during extreme load
+
+**Best Practices**:
+
+1. **Always Use Finally Blocks**:
+```python
+try:
+    await pool_manager.acquire_connection(user_id, thread_id)
+    # Process request
+finally:
+    await pool_manager.release_connection(thread_id, user_id)
+```
+
+2. **Monitor Pool Utilization**:
+```python
+# Set up alerts for DEGRADED state (70% capacity)
+if state == ConnectionState.DEGRADED:
+    send_alert("Connection pool at 70% capacity")
+    
+# Critical alert for CRITICAL state (90% capacity)
+if state == ConnectionState.CRITICAL:
+    send_critical_alert("Connection pool at 90% capacity - scale immediately")
+```
+
+3. **Tune Limits Based on Load**:
+```python
+# For high-traffic scenarios
+MAX_CONCURRENT_CONNECTIONS = 20000
+MAX_CONNECTIONS_PER_USER = 5
+
+# For resource-constrained environments
+MAX_CONCURRENT_CONNECTIONS = 5000
+MAX_CONNECTIONS_PER_USER = 2
+```
+
+**Integration with FastAPI**:
+
+The connection pool is integrated at the route handler level:
+
+```python
+@router.post("/stream")
+async def create_stream(
+    request: Request,
+    body: StreamRequestModel,
+    user_id: UserIdDep
+):
+    thread_id = request.headers.get("X-Thread-ID") or str(uuid.uuid4())
+    pool_manager = get_connection_pool_manager()
+    
+    try:
+        # Acquire connection before processing
+        await pool_manager.acquire_connection(user_id=user_id, thread_id=thread_id)
+    except ConnectionPoolExhaustedError as e:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "service_unavailable", "message": str(e)},
+            headers={"X-Thread-ID": thread_id}
+        )
+    except UserConnectionLimitError as e:
+        return JSONResponse(
+            status_code=429,
+            content={"error": "too_many_connections", "message": str(e)},
+            headers={"X-Thread-ID": thread_id}
+        )
+    
+    try:
+        # Process streaming request
+        return StreamingResponse(event_generator(), media_type="text/event-stream")
+    finally:
+        # Always release connection
+        await pool_manager.release_connection(thread_id=thread_id, user_id=user_id)
+```
+
+---
 
 ### Circuit Breaker (`circuit_breaker.py`)
 

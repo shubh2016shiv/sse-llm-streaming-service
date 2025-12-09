@@ -16,7 +16,10 @@ class ConnectionPoolError(SSEBaseError):
         code: str = "CONNECTION_POOL_ERROR",
         details: dict | None = None
     ):
-        super().__init__(message=message, code=code, details=details)
+        # SSEBaseError doesn't accept 'code' parameter, so include it in details
+        error_details = details or {}
+        error_details["code"] = code
+        super().__init__(message=message, details=error_details)
 
 
 class ConnectionPoolExhaustedError(ConnectionPoolError):

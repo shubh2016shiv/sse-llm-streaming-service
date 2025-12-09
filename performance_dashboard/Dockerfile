@@ -22,8 +22,12 @@ RUN npm ci --legacy-peer-deps
 # Copy source code
 COPY . .
 
+# Build argument for API base URL (passed from docker-compose)
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 # Build the application
-# Vite will use .env.production for environment variables
+# Vite will embed VITE_API_BASE_URL at build time
 RUN npm run build
 
 # ============================================================================
