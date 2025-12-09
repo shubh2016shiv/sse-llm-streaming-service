@@ -51,6 +51,13 @@ from src.core.exceptions.circuit_breaker import (
     CircuitBreakerOpenError,
 )
 
+# Connection Pool exceptions
+from src.core.exceptions.connection_pool import (
+    ConnectionPoolError,
+    ConnectionPoolExhaustedError,
+    UserConnectionLimitError,
+)
+
 # Provider exceptions
 from src.core.exceptions.provider import (
     AllProvidersDownError,
@@ -69,7 +76,6 @@ from src.core.exceptions.rate_limit import RateLimitError, RateLimitExceededErro
 
 # Streaming exceptions
 from src.core.exceptions.streaming import (
-    ConnectionPoolExhaustedError,
     StreamingError,
     StreamingTimeoutError,
 )
@@ -109,10 +115,13 @@ __all__ = [
     # Rate Limit
     "RateLimitError",
     "RateLimitExceededError",
+    # Connection Pool
+    "ConnectionPoolError",
+    "ConnectionPoolExhaustedError",
+    "UserConnectionLimitError",
     # Streaming
     "StreamingError",
     "StreamingTimeoutError",
-    "ConnectionPoolExhaustedError",
     # Validation
     "ValidationError",
     "InvalidModelError",
