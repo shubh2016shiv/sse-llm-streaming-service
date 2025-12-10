@@ -52,14 +52,21 @@ Wait for the message: `"✓ All services are healthy!"`
 
 From the **performance_dashboard directory**, run:
 
-**Windows:**
-```powershell
-.\start_dashboard.ps1
+**Cross-platform (Recommended):**
+```bash
+python manage_dashboard_ops.py start
 ```
 
-**Linux/Mac:**
+**Alternative options:**
 ```bash
-./start_dashboard.sh
+# Auto-start backend if not running
+python manage_dashboard_ops.py start --auto-start
+
+# Skip Docker image build (faster if image exists)
+python manage_dashboard_ops.py start --skip-build
+
+# Custom health check timeout
+python manage_dashboard_ops.py start --health-timeout 5
 ```
 
 The script will:
@@ -70,6 +77,30 @@ The script will:
 If the backend is not running, the script will:
 - Display clear instructions to start it
 - Ask if you want to continue anyway (dashboard will show "Disconnected" status)
+
+#### Dashboard Management
+
+The `manage_dashboard_ops.py` script provides comprehensive dashboard lifecycle management:
+
+**Check Status:**
+```bash
+python manage_dashboard_ops.py status
+```
+
+**Stop Dashboard:**
+```bash
+python manage_dashboard_ops.py stop
+```
+
+**Restart Dashboard:**
+```bash
+python manage_dashboard_ops.py restart --skip-build
+```
+
+**Get Help:**
+```bash
+python manage_dashboard_ops.py --help
+```
 
 #### Step 3: Access the Dashboard
 
@@ -533,9 +564,8 @@ performance_dashboard/
 ├── public/                     # Static assets
 ├── Dockerfile                  # Multi-stage Docker build
 ├── docker-compose.yml          # Standalone deployment
+├── manage_dashboard_ops.py     # Cross-platform dashboard management script
 ├── nginx.conf                  # Nginx configuration
-├── start_dashboard.ps1         # Windows startup script
-├── start_dashboard.sh          # Linux/Mac startup script
 ├── vite.config.js              # Vite configuration
 └── package.json                # Dependencies
 ```
