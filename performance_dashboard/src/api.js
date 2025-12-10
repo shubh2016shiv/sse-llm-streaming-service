@@ -94,7 +94,7 @@ export const getConfig = async () => {
 };
 
 export const updateConfig = async (config) => {
-    const response = await api.post('/admin/config', config);
+    const response = await api.put('/admin/config', config);
     return response.data;
 };
 

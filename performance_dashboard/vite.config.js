@@ -20,6 +20,15 @@ export default defineConfig(({ mode }) => {
     // Make env variables available in the app
     define: {
       'import.meta.env.VITE_API_BASE_URL': JSON.stringify(env.VITE_API_BASE_URL || 'http://localhost:8000')
+    },
+    // Optimize dependencies to include react-is
+    optimizeDeps: {
+      include: ['react-is', 'recharts']
+    },
+    build: {
+      commonjsOptions: {
+        include: [/react-is/, /node_modules/]
+      }
     }
   }
 })

@@ -106,21 +106,34 @@ const BackendStatusIndicator = () => {
     };
 
     return (
-        <div className={`flex items-center gap-3 px-4 py-2 rounded-lg border ${statusConfig.bgColor} ${statusConfig.borderColor}`}>
+        <div className={`flex items-center gap-3 px-4 py-2 rounded-lg border text-sm ${statusConfig.bgColor} ${statusConfig.borderColor}`}>
+            {/* Status Indicator Dot */}
+            {status.healthy && (
+                <div 
+                    className="rounded-full animate-pulse"
+                    style={{
+                        width: '8px',
+                        height: '8px',
+                        background: 'var(--success-green)',
+                        boxShadow: '0 0 8px var(--success-green)'
+                    }}
+                    aria-hidden="true"
+                ></div>
+            )}
+            
             {/* Status Icon */}
             <StatusIcon
                 className={`${statusConfig.color} ${status.healthy === null ? 'animate-pulse' : ''}`}
-                size={20}
+                size={18}
+                aria-hidden="true"
             />
 
             {/* Status Text */}
             <div className="flex flex-col">
-                <div className="flex items-center gap-2">
-                    <span className={`font-semibold text-sm ${statusConfig.color}`}>
-                        Backend: {statusConfig.text}
-                    </span>
-                </div>
-                <span className="text-xs text-muted">
+                <span className={`font-semibold ${statusConfig.color}`}>
+                    Backend: {statusConfig.text}
+                </span>
+                <span className="text-xs text-text-muted">
                     Last check: {formatLastCheck()}
                 </span>
             </div>
@@ -130,12 +143,12 @@ const BackendStatusIndicator = () => {
                 <button
                     onClick={handleManualRetry}
                     disabled={isManualChecking}
-                    className="ml-2 p-1.5 rounded-md hover:bg-gray-700 transition-colors"
+                    className="ml-2 p-1.5 rounded-md hover:bg-white/10 transition-colors"
                     title="Retry connection"
                 >
                     <RefreshCw
-                        size={16}
-                        className={`text-gray-400 ${isManualChecking ? 'animate-spin' : ''}`}
+                        size={14}
+                        className={`text-text-secondary ${isManualChecking ? 'animate-spin' : ''}`}
                     />
                 </button>
             )}

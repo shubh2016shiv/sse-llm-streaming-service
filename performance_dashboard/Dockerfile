@@ -17,7 +17,8 @@ COPY package*.json ./
 
 # Install dependencies
 # --legacy-peer-deps handles any peer dependency conflicts
-RUN npm ci --legacy-peer-deps
+# --prefer-offline uses cached packages when possible
+RUN npm ci --legacy-peer-deps --prefer-offline || npm install --legacy-peer-deps
 
 # Copy source code
 COPY . .
