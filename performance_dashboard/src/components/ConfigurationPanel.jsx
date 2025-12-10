@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Settings, Save, RefreshCw, Server, Zap, Database } from 'lucide-react';
+import { Settings, Save, Server, Zap, Database } from 'lucide-react';
 
 const ConfigurationPanel = ({ config, setConfig, onSave, status, loading, onRefresh }) => {
     const handleChange = (key, value) => {
@@ -9,34 +9,11 @@ const ConfigurationPanel = ({ config, setConfig, onSave, status, loading, onRefr
     return (
         <div className="bg-bg-card border border-border rounded-xl shadow-lg">
             <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center gap-3">
-                        <div className="p-2 rounded-lg bg-blue-500/20">
-                            <Settings className="text-accent-primary" size={24} />
-                        </div>
-                        <h2 className="text-xl font-bold">System Configuration</h2>
+                <div className="flex items-center gap-3 mb-6">
+                    <div className="p-2 rounded-lg bg-blue-500/20">
+                        <Settings className="text-accent-primary" size={24} />
                     </div>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={onRefresh}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-text-primary bg-bg-tertiary border border-border rounded-lg hover:bg-border-hover transition-colors disabled:opacity-50"
-                            disabled={loading}
-                            aria-label="Refresh configuration"
-                        >
-                            <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
-                            Refresh
-                        </button>
-                        <button
-                            onClick={onSave}
-                            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
-                            style={{ background: 'linear-gradient(135deg, var(--primary-blue), var(--primary-purple))' }}
-                            disabled={loading}
-                            aria-label="Apply configuration changes"
-                        >
-                            <Save size={16} />
-                            Apply
-                        </button>
-                    </div>
+                    <h2 className="text-xl font-bold">System Configuration</h2>
                 </div>
 
                 <div className="space-y-4">
@@ -116,6 +93,18 @@ const ConfigurationPanel = ({ config, setConfig, onSave, status, loading, onRefr
                             </button>
                         </div>
                     </div>
+
+                    {/* Apply Button */}
+                    <button
+                        onClick={onSave}
+                        className="w-full flex items-center justify-center gap-2 py-2 px-4 text-sm font-semibold text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+                        style={{ background: 'linear-gradient(135deg, var(--primary-blue), var(--primary-purple))' }}
+                        disabled={loading}
+                        aria-label="Apply configuration changes"
+                    >
+                        <Save size={16} />
+                        Apply
+                    </button>
 
                     {/* Status Message */}
                     {status && (
