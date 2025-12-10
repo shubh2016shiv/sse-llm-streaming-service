@@ -291,23 +291,65 @@ async def create_stream(
             },
             headers={HEADER_THREAD_ID: thread_id},
         )
-    except UserConnectionLimitError as e:
-        # User exceeded per-user limit - return 429 Too Many Requests
+    except (ConnectionPoolExhaustedError, UserConnectionLimitError) as e:
+        # ====================================================================
+        # LAYER 3 DEFENSE: Queue Failover
+        # ====================================================================
+        # Instead of rejecting with 429, we enqueue the request to be processed
+        # when resources become available.
+        #
+        # Mechanism:
+        # 1. Enqueue request payload to "streaming_requests_failover" topic
+        # 2. Worker process picks it up when ready
+        # 3. Worker streams response back via Redis Pub/Sub
+        # 4. This endpoint yields the subscribed stream chunk-by-chunk
+
         logger.warning(
-            "User connection limit exceeded - returning 429", thread_id=thread_id, user_id=user_id
+            "Connection pool limit reached - activating Queue Failover (Layer 3)",
+            stage="LAYER3.ACTIVATE",
+            thread_id=thread_id,
+            user_id=user_id,
+            reason=str(e)
         )
-        return JSONResponse(
-            status_code=429,
-            content={
-                "error": "too_many_connections",
-                "message": (
-                    f"Too many concurrent connections. "
-                    f"Maximum {pool_manager.max_per_user} allowed."
-                ),
-                "details": e.details,
-            },
-            headers={HEADER_THREAD_ID: thread_id},
-        )
+
+        try:
+            from src.core.resilience.queue_request_handler import get_queue_request_handler
+            queue_handler = get_queue_request_handler()
+
+            # This returns an async generator that yields SSE events from the queue worker
+            stream_generator = queue_handler.queue_and_stream(
+                user_id=user_id,
+                thread_id=thread_id,
+                payload=body.model_dump()
+            )
+
+            return StreamingResponse(
+                stream_generator,
+                media_type="text/event-stream",
+                headers={
+                    HEADER_THREAD_ID: thread_id,
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                    "X-Resilience-Layer": "3-Queue-Failover"  # Header to indicate failover
+                },
+            )
+
+        except Exception as queue_error:
+            # If even the queue fails (e.g. Redis down), then we must return 503
+            logger.error(
+                "Queue failover failed",
+                stage="LAYER3.ERROR",
+                error=str(queue_error)
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "service_unavailable",
+                    "message": "System checks failed. Please try again later."
+                },
+                headers={HEADER_THREAD_ID: thread_id}
+            )
 
     # ========================================================================
     # STEP 3: Record Metrics

@@ -282,6 +282,85 @@ class UpdateConfigRequest(BaseModel):
     QUEUE_TYPE: str | None = None  # Message queue type (redis/kafka)
 
 
+@router.get("/streaming-metrics")
+async def get_streaming_metrics():
+    """
+    Get consolidated streaming performance metrics for dashboard.
+
+    This endpoint aggregates:
+    - Connection pool statistics (utilization, state)
+    - Cache performance (hit rates, sizes)
+    - Stage timing percentiles (p50, p90, p95, p99)
+
+    Returns:
+        dict: Comprehensive streaming metrics
+
+    Example Response:
+        {
+            "connection_pool": {
+                "total_connections": 15,
+                "max_connections": 100,
+                "utilization_percent": 15.0,
+                "state": "healthy"
+            },
+            "cache_stats": {
+                "l1_hit_rate": 0.68,
+                "l1_size": 234,
+                "l1_max_size": 1000
+            },
+            "stage_timings": {
+                "1": {"p50": 2.1, "p90": 4.5, "p95": 6.2, "p99": 10.1},
+                ...
+            }
+        }
+    """
+    # Import dependencies
+    from src.core.resilience.connection_pool_manager import get_connection_pool_manager
+    from src.infrastructure.cache.cache_manager import get_cache_manager
+
+    # Get connection pool stats
+    pool_manager = get_connection_pool_manager()
+    pool_stats = await pool_manager.get_stats()
+
+    # Get cache manager
+    cache_manager = get_cache_manager()
+    cache_stats = cache_manager.get_cache_stats()
+
+    # Get execution tracker for stage timings
+    tracker = get_tracker()
+    stages = ["1", "2", "2.1", "2.2", "3", "4", "5", "6"]
+    stage_timings = {}
+
+    for stage in stages:
+        stats = tracker.get_stage_statistics(stage)
+        stage_timings[stage] = {
+            "p50_duration_ms": stats["p50_duration_ms"],
+            "p90_duration_ms": stats.get("p90_duration_ms", 0),  # p90 not in current implementation
+            "p95_duration_ms": stats["p95_duration_ms"],
+            "p99_duration_ms": stats["p99_duration_ms"],
+            "avg_duration_ms": stats["avg_duration_ms"],
+            "execution_count": stats["execution_count"]
+        }
+
+    # Consolidate response
+    return {
+        "connection_pool": {
+            "active": pool_stats.get("total_connections", 0),
+            "max": pool_stats.get("max_connections", 100),
+            "utilization_percent": pool_stats.get("utilization_percent", 0),
+            "state": pool_stats.get("state", "unknown")
+        },
+        "cache": {
+            "l1": {
+                "hit_rate": cache_stats["l1_stats"]["hit_rate"],
+                "size": cache_stats["l1_stats"]["size"],
+                "max_size": cache_stats["l1_stats"]["max_size"]
+            }
+        },
+        "stages": stage_timings
+    }
+
+
 @router.put("/config")
 async def update_configuration(request: UpdateConfigRequest):
     """

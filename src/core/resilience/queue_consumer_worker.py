@@ -128,10 +128,36 @@ class QueueConsumerWorker:
             # Acquire connection
             connection_acquired = False
             try:
+                # MECHANISM EXPLANATION: Dequeue & Process
+                # ----------------------------------------
+                # We have popped a message from the queue (Redis List or Kafka Topic).
+                # Now we must acquire a connection slot to process it.
+                # If the pool is STILL full, we will:
+                # 1. Release the message (nack) OR
+                # 2. Re-queue it with backoff (handle_retry)
+
+                queue_source = (
+                    self._queue.queue_name
+                    if hasattr(self._queue, 'queue_name')
+                    else self.QUEUE_TOPIC
+                )
+
+                logger.info(
+                    f"[QUEUE-CONSUMER] Popped request from: {queue_source}",
+                    stage="LAYER3.DEQUEUE",
+                    request_id=request.request_id,
+                    queue_type=self.settings.QUEUE_TYPE,
+                    queue_source=queue_source,
+                    processing_start=time.time()
+                )
+
                 await self._pool_manager.acquire_connection(request.user_id, request.thread_id)
                 connection_acquired = True
 
-                logger.info("Processing queued request", id=request.request_id)
+                logger.info(
+                    "Connection acquired for queued request - starting stream processing",
+                    id=request.request_id
+                )
 
                 # EXECUTE STREAM
                 # We need to capture the generator and publish chunks

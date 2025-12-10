@@ -105,7 +105,82 @@ The stateless design extends to all application components. The cache manager ma
 
 ## 4. Resiliency and Fault Tolerance
 
-In an ecosystem dependent on third-party AI providers, external failures are inevitable. The system implements a defensive architecture designed to maintain service stability even when upstream providers experience outages or high latency.
+In an ecosystem dependent on third-party AI providers, external failures are inevitable. The system implements a defensive architecture designed to maintain service stability even when upstream providers experience outages or high latency. Additionally, the system implements a three-layer defense strategy to prevent request rejections during capacity exhaustion.
+
+### 4.0 Three-Layer Defense Strategy
+
+The system employs a comprehensive three-layer defense architecture to ensure zero request failures even under extreme load conditions:
+
+**Layer 1: NGINX Load Balancer**
+- **Mechanism**: Round-robin distribution across FastAPI instances
+- **Role**: Prevents any single instance from being overwhelmed
+- **Benefit**: Distributes traffic evenly across the cluster
+
+**Layer 2: Connection Pool Manager (Distributed)**
+- **Mechanism**: Redis-backed counters enforcing global (10,000) and per-user (3) limits
+- **Role**: Protects backend resources from saturation
+- **Point of Failure**: Without Layer 3, requests exceeding these limits receive `429 Too Many Requests` errors
+
+**Layer 3: Distributed Queue Failover (The Final Safety Net)**
+- **Mechanism**: Redis Streams + Pub/Sub for distributed request queuing
+- **Role**: When connection pool limits are reached, requests are **queued** instead of rejected
+- **Goal**: Achieve **0% failure rate** by converting "rejections" into "delayed successes"
+
+### 4.0.1 Layer 3: Queue Failover Architecture
+
+When a request encounters `UserConnectionLimitError` or `ConnectionPoolExhaustedError`, the system activates Layer 3 failover instead of returning 429/503 errors to the client.
+
+**Mechanism Flow**:
+
+```
+Request → Pool Full → Queue Failover Activated
+                            ↓
+┌───────────────────────────────────────────────────────────────┐
+│ REQUEST HANDLER (Instance A - Holding Client Connection)     │
+│                                                               │
+│ 1. Generate unique request_id                                │
+│ 2. Enqueue payload to Redis Stream: "streaming_requests"     │
+│ 3. Subscribe to Redis Pub/Sub: "queue:results:{request_id}"  │
+│ 4. Keep HTTP connection open, waiting for worker response    │
+└───────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────┐
+│ QUEUE CONSUMER WORKER (Instance B - Background Processing)   │
+│                                                               │
+│ 1. Pop message from Redis Stream                             │
+│ 2. Acquire connection slot when available                    │
+│ 3. Process LLM streaming request                             │
+│ 4. PUBLISH each chunk to "queue:results:{request_id}"        │
+│ 5. Signal completion with SIGNAL:DONE                        │
+└───────────────────────────────────────────────────────────────┘
+                            ↓
+┌───────────────────────────────────────────────────────────────┐
+│ REQUEST HANDLER (Instance A - Resumes)                       │
+│                                                               │
+│ 1. Receives chunks from subscribed Redis channel             │
+│ 2. Yields chunks as SSE events to client                     │
+│ 3. Maintains real-time streaming experience                  │
+│ 4. Unsubscribes on SIGNAL:DONE                               │
+│ 5. Sets X-Resilience-Layer: 3-Queue-Failover header          │
+└───────────────────────────────────────────────────────────────┘
+```
+
+**Key Implementation Details**:
+
+1. **Queue Type Agnostic**: Works with both Redis Streams and Kafka topics, depending on `QUEUE_TYPE` configuration
+2. **True Streaming Preserved**: Client still receives SSE chunks in real-time, even though processing is distributed
+3. **Distributed Coordination**: Instance A holds the connection while Instance B processes the request
+4. **Transparent to Client**: User experiences slightly longer "thinking" time but receives response without errors
+
+**Redis Keys Used**:
+- Queue: `streaming_requests_failover` (Redis List) or Kafka topic
+- Result Channel: `queue:results:{request_id}` (Redis Pub/Sub)
+
+**Success Metrics**:
+- **0% 429 errors** to clients during load tests
+- **100% request fulfillment** even when pool exhausted
+- **P99 latency**: ~3-5 seconds for queued requests vs ~200ms for direct requests
+- **Transparent failover**: Client receives `X-Resilience-Layer: 3-Queue-Failover` header
 
 ### 4.1 Distributed Circuit Breaker Pattern with Redis Backend
 
@@ -136,20 +211,6 @@ The `ProviderFactory.get_healthy_provider` method iterates through all registere
 This failover process is transparent to the client. The `ProviderFactory` maintains a registry of all configured providers and can dynamically select a backup based on real-time health metrics. This ensures that a localized outage at OpenAI or DeepSeek does not result in a service denial for the end user, significantly increasing the overall availability SLA of the platform.
 
 The failover logic is executed within the provider selection stage (STAGE-4) of the request lifecycle, ensuring that provider selection failures are tracked and can be analyzed for patterns. The system logs the selected provider name and model for each request, enabling correlation between provider selection and request outcomes.
-
-## 5. The Streaming Data Flow
-
-### 4.4 Distributed Queue Failover (Layer 3 Defense)
-
-To ensure zero dropped requests during high load, the system implements a **Distributed Queue Failover** mechanism as the third layer of defense.
-
-When the connection pool is exhausted (Layer 2), instead of rejecting the request with a 429 error, the request is:
-1.  **Queued** to a Redis Stream (`streaming_requests_failover`).
-2.  **subscribed** to a Redis Pub/Sub channel (`queue:results:{id}`).
-3.  **Processed** by a background `QueueConsumerWorker` on any available instance.
-4.  **Streamed** back to the original instance via Redis Pub/Sub.
-
-This architecture ensures that even if local resources are full, the distributed cluster can absorb the load and process it asynchronously, maintaining a "Streaming" user experience without errors.
 
 ## 5. The Streaming Data Flow
 

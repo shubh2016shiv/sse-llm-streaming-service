@@ -190,12 +190,41 @@ class QueueRequestHandler:
         )
 
         try:
+            # =========================================================================
+            # MECHANISM EXPLANATION: Enqueueing Strategy
+            # =========================================================================
+            # 1. We wrap the request payload into a standardized dictionary
+            # 2. We push this payload to the configured Message Queue (Redis/Kafka)
+            # 3. We DO NOT wait for the worker to pick it up here.
+            # 4. Instead, we immediately start listening to the "result channel" (Pub/Sub)
+            #
+            # The worker process (running independently) will:
+            # - Pop this message from the queue
+            # - Process it
+            # - Publish results back to the channel we are listening to
+
+            queue_key = (
+                self._queue.queue_name
+                if hasattr(self._queue, 'queue_name')
+                else self.QUEUE_TOPIC
+            )
+
+            # LOGGING REQUIREMENT: Show exactly where the data is going
+            logger.info(
+                f"[QUEUE-PRODUCER] Pushing request to queue: {queue_key}",
+                stage="LAYER3.ENQUEUE",
+                request_id=request_id,
+                queue_type=self.settings.QUEUE_TYPE,  # 'redis' or 'kafka'
+                queue_key=queue_key,                  # Redis Key or Kafka Topic
+                payload_size=len(str(queued_request.to_dict()))
+            )
+
             await self._queue.produce(queued_request.to_dict())
             self._metrics.record_queue_produce_attempt("failover")
 
             logger.info(
-                "Request queued, listening for stream",
-                stage="LAYER3.STREAM_START",
+                "Request successfully queued, now listening for stream response...",
+                stage="LAYER3.STREAM_WAIT",
                 request_id=request_id,
                 channel=channel_name
             )
