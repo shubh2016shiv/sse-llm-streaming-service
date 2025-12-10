@@ -5,19 +5,20 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 
 // Import API_BASE_URL from api.js to ensure consistency
 // This will use the same base URL as other API calls (includes /api/v1 prefix)
-import { api } from '../api';
+import { api, getConfig } from '../api';
+import { getModelsForProvider, getDefaultModelForProvider } from '../config/models';
 
 const API_BASE_URL = api.defaults.baseURL;
 
-const LoadTester = () => {
+const LoadTester = ({ useFakeLLM }) => {
     const [running, setRunning] = useState(false);
     const [concurrency, setConcurrency] = useState(10);
     const [totalRequests, setTotalRequests] = useState(50);
 
     // User-configurable prompt and provider
     const [prompt, setPrompt] = useState("Write a short poem about performance testing.");
-    const [provider, setProvider] = useState("fake");
-    const [model, setModel] = useState("gpt-3.5-turbo");
+    const [provider, setProvider] = useState("openai");
+    const [model, setModel] = useState(getDefaultModelForProvider("openai"));
 
     // Real-time metrics
     const [stats, setStats] = useState({
@@ -87,7 +88,7 @@ const LoadTester = () => {
                 body: JSON.stringify({
                     query: prompt,  // Use user-provided prompt
                     model: model,   // Use selected model
-                    provider: provider,  // Use selected provider
+                    provider: useFakeLLM ? "fake" : provider,  // Force fake if enabled in config
                     stream: true
                 }),
                 signal: abortControllerRef.current.signal,
@@ -158,6 +159,21 @@ const LoadTester = () => {
         }
     }, [running, latencies]);
 
+    // Update model when provider changes (only if Fake LLM is disabled)
+    useEffect(() => {
+        if (!useFakeLLM && provider) {
+            const defaultModel = getDefaultModelForProvider(provider);
+            if (defaultModel) {
+                setModel(defaultModel);
+            }
+        }
+    }, [provider, useFakeLLM]);
+
+    // Get available models for current provider (only if Fake LLM is disabled)
+    const availableModels = useFakeLLM 
+        ? [] // Empty when disabled, doesn't matter since dropdown is disabled
+        : (getModelsForProvider(provider) || []);
+
     // Calculate progress percentage
     const progressPercentage = totalRequests > 0 
         ? ((stats.completed + stats.failed) / totalRequests) * 100 
@@ -192,32 +208,61 @@ const LoadTester = () => {
                     {/* Provider and Model Selection */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                         <div>
-                            <label htmlFor="provider-select" className="block text-sm font-medium text-text-secondary mb-2">Provider</label>
+                            <label htmlFor="provider-select" className="block text-sm font-medium text-text-secondary mb-2">
+                                Provider
+                                {useFakeLLM && (
+                                    <span className="ml-2 text-xs text-text-muted">(Disabled: Fake LLM enabled in config)</span>
+                                )}
+                            </label>
                             <select
                                 id="provider-select"
                                 value={provider}
                                 onChange={(e) => setProvider(e.target.value)}
-                                className="w-full p-3 bg-bg-dark border border-border rounded-lg text-text-primary focus:outline-none focus:ring-accent-primary"
-                                disabled={running}
+                                className="w-full p-3 bg-bg-dark border border-border rounded-lg text-text-primary focus:outline-none focus:ring-accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={running || useFakeLLM}
+                                aria-label="Select LLM provider"
                             >
-                                <option value="fake">Fake LLM (Testing)</option>
                                 <option value="openai">OpenAI</option>
                                 <option value="anthropic">Anthropic</option>
                             </select>
                         </div>
                         <div>
-                            <label htmlFor="model-input" className="block text-sm font-medium text-text-secondary mb-2">Model</label>
-                            <input
-                                id="model-input"
-                                type="text"
+                            <label htmlFor="model-select" className="block text-sm font-medium text-text-secondary mb-2">
+                                Model
+                                {useFakeLLM && (
+                                    <span className="ml-2 text-xs text-text-muted">(Disabled: Fake LLM enabled in config)</span>
+                                )}
+                            </label>
+                            <select
+                                id="model-select"
                                 value={model}
                                 onChange={(e) => setModel(e.target.value)}
-                                className="w-full p-3 bg-bg-dark border border-border rounded-lg text-text-primary focus:outline-none focus:ring-accent-primary"
-                                placeholder="e.g., gpt-3.5-turbo"
-                                disabled={running}
-                            />
+                                className="w-full p-3 bg-bg-dark border border-border rounded-lg text-text-primary focus:outline-none focus:ring-accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={running || useFakeLLM}
+                                aria-label="Select model"
+                            >
+                                {availableModels.length > 0 ? (
+                                    availableModels.map((modelOption) => (
+                                        <option key={modelOption.value} value={modelOption.value}>
+                                            {modelOption.label}
+                                        </option>
+                                    ))
+                                ) : (
+                                    <option value="">No models available</option>
+                                )}
+                            </select>
                         </div>
                     </div>
+                    
+                    {/* Info message when Fake LLM is enabled */}
+                    {useFakeLLM && (
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                            <p className="text-sm text-blue-300">
+                                ℹ️ Fake LLM Provider is enabled in System Configuration. Provider and Model selection is disabled. 
+                                All tests will use the simulated LLM regardless of selection.
+                            </p>
+                        </div>
+                    )}
 
                     {/* Sliders and Inputs */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">

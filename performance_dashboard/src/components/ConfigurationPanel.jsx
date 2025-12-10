@@ -1,50 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Settings, Save, RefreshCw, Server, Zap, Database } from 'lucide-react';
-import { getConfig, updateConfig } from '../api';
 
-const ConfigurationPanel = () => {
-    const [config, setConfig] = useState({
-        USE_FAKE_LLM: true,
-        ENABLE_CACHING: true,
-        QUEUE_TYPE: 'redis',
-    });
-    const [loading, setLoading] = useState(false);
-    const [status, setStatus] = useState('');
-
-    useEffect(() => {
-        fetchConfig();
-    }, []);
-
-    const fetchConfig = async () => {
-        setLoading(true);
-        try {
-            const data = await getConfig();
-            setConfig(data);
-        } catch (err) {
-            console.error("Failed to load config", err);
-            setStatus("Failed to load config.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
+const ConfigurationPanel = ({ config, setConfig, onSave, status, loading, onRefresh }) => {
     const handleChange = (key, value) => {
         setConfig((prev) => ({ ...prev, [key]: value }));
-    };
-
-    const handleSave = async () => {
-        setLoading(true);
-        setStatus('Saving...');
-        try {
-            await updateConfig(config);
-            setStatus('Configuration saved!');
-            setTimeout(() => setStatus(''), 2000);
-        } catch (err) {
-            console.error("Failed to save config", err);
-            setStatus('Failed to save.');
-        } finally {
-            setLoading(false);
-        }
     };
 
     return (
@@ -59,7 +18,7 @@ const ConfigurationPanel = () => {
                     </div>
                     <div className="flex gap-2">
                         <button
-                            onClick={fetchConfig}
+                            onClick={onRefresh}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-text-primary bg-bg-tertiary border border-border rounded-lg hover:bg-border-hover transition-colors disabled:opacity-50"
                             disabled={loading}
                             aria-label="Refresh configuration"
@@ -68,7 +27,7 @@ const ConfigurationPanel = () => {
                             Refresh
                         </button>
                         <button
-                            onClick={handleSave}
+                            onClick={onSave}
                             className="flex items-center gap-2 px-4 py-2 text-sm font-semibold text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
                             style={{ background: 'linear-gradient(135deg, var(--primary-blue), var(--primary-purple))' }}
                             disabled={loading}
