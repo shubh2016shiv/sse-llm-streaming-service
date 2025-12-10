@@ -14,6 +14,11 @@ const LoadTester = () => {
     const [concurrency, setConcurrency] = useState(10);
     const [totalRequests, setTotalRequests] = useState(50);
 
+    // User-configurable prompt and provider
+    const [prompt, setPrompt] = useState("Write a short poem about performance testing.");
+    const [provider, setProvider] = useState("fake");
+    const [model, setModel] = useState("gpt-3.5-turbo");
+
     // Real-time metrics
     const [stats, setStats] = useState({
         active: 0,
@@ -80,9 +85,9 @@ const LoadTester = () => {
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify({
-                    query: "Write a short poem about performance testing.",
-                    model: "gpt-3.5-turbo",  // Required field
-                    provider: "fake",  // Use fake provider for testing
+                    query: prompt,  // Use user-provided prompt
+                    model: model,   // Use selected model
+                    provider: provider,  // Use selected provider
                     stream: true
                 }),
                 signal: abortControllerRef.current.signal,
@@ -158,6 +163,47 @@ const LoadTester = () => {
             <div className="flex items-center gap-4 mb-6">
                 <Activity className="text-accent-secondary" size={24} />
                 <h2 className="text-xl font-bold">Load Tester</h2>
+            </div>
+
+            {/* Prompt Configuration */}
+            <div className="mb-6">
+                <label className="block text-sm text-gray-400 mb-2">Prompt Text</label>
+                <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    rows="3"
+                    placeholder="Enter your prompt here..."
+                    disabled={running}
+                />
+            </div>
+
+            {/* Provider and Model Selection */}
+            <div className="grid grid-cols-2 gap-6 mb-6">
+                <div>
+                    <label className="block text-sm text-gray-400 mb-2">Provider</label>
+                    <select
+                        value={provider}
+                        onChange={(e) => setProvider(e.target.value)}
+                        className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        disabled={running}
+                    >
+                        <option value="fake">Fake LLM (Testing)</option>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                    </select>
+                </div>
+                <div>
+                    <label className="block text-sm text-gray-400 mb-2">Model</label>
+                    <input
+                        type="text"
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className="w-full p-3 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="e.g., gpt-3.5-turbo"
+                        disabled={running}
+                    />
+                </div>
             </div>
 
             <div className="grid grid-cols-2 gap-6 mb-6">

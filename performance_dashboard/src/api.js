@@ -104,18 +104,40 @@ export const runLoadTest = async ({ concurrency, provider, prompt }) => {
     // We will implement the logic in the component, but here we can define the single stream request.
 
     // Use API_BASE_URL to ensure /api/v1 prefix is included
-    const response = await fetch(`${API_BASE_URL}/stream`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            query: prompt,
-            provider: provider,
-            stream: true
-        })
-    });
-    return response;
+    try {
+        const response = await fetch(`${API_BASE_URL}/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                query: prompt,
+                provider: provider,
+                stream: true
+            })
+        });
+
+        // CRITICAL: Return status so the caller can distinguish 200 vs 429
+        // The dashboard must treat non-2xx as failures!
+        return {
+            ok: response.ok,
+            status: response.status,
+            statusText: response.statusText,
+            // If it's a stream, we might want to read it, but for load testing
+            // just knowing it started successfully (200) vs rejected (429) is enough.
+            // But we should drain the stream to measure time.
+            body: response.body
+        };
+    } catch (error) {
+        // Network error (DNS, Connection Refused, etc)
+        // Treat as failed
+        return {
+            ok: false,
+            status: 0,
+            statusText: error.message || 'Network Error',
+            error: error
+        };
+    }
 };
 
 /**
