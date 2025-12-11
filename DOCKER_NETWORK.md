@@ -1322,6 +1322,131 @@ Prevents clutter and potential subnet conflicts.
 
 ---
 
+### 10. Implement Environment-Aware Service URLs
+
+When your application can run both **inside Docker** and **on the host machine** (local development), you need to handle different service URLs dynamically.
+
+**The Problem:**
+
+```python
+# ❌ Hardcoded Docker hostname - breaks local development
+PROMETHEUS_URL = "http://prometheus:9090"  # DNS fails on host
+
+# ❌ Hardcoded localhost - breaks Docker deployment
+PROMETHEUS_URL = "http://localhost:9090"  # Can't reach other containers
+```
+
+**The Solution: Auto-Detection**
+
+Detect the runtime environment and select the appropriate URL:
+
+```python
+def _is_running_in_docker() -> bool:
+    """Detect if running inside Docker container."""
+    try:
+        # Method 1: Check for /.dockerenv file (most reliable)
+        if Path("/.dockerenv").exists():
+            return True
+        
+        # Method 2: Check /proc/1/cgroup for "docker" (Linux)
+        with open("/proc/1/cgroup", "rt") as f:
+            return "docker" in f.read()
+    except Exception:
+        # Method 3: Environment variable (Windows/manual override)
+        return bool(os.getenv("DOCKER_CONTAINER"))
+
+def _detect_service_url(service_name: str, port: int) -> str:
+    """Auto-detect correct service URL based on environment."""
+    # Priority 1: Explicit environment variable
+    env_var = f"{service_name.upper()}_URL"
+    if url := os.getenv(env_var):
+        return url
+    
+    # Priority 2: Auto-detect environment
+    if _is_running_in_docker():
+        return f"http://{service_name}:{port}"  # Docker DNS
+    else:
+        return f"http://localhost:{port}"  # Host network
+```
+
+**Real-World Example: Prometheus Client**
+
+```python
+# src/infrastructure/monitoring/prometheus_client.py
+class PrometheusClient:
+    def __init__(self, base_url: str | None = None):
+        # Auto-detect: localhost (host) or prometheus (Docker)
+        self.base_url = base_url or _detect_prometheus_url()
+```
+
+**How It Works:**
+
+```mermaid
+graph TB
+    START[Application Starts]
+    
+    START --> CHECK_ENV{PROMETHEUS_URL<br/>env var set?}
+    CHECK_ENV -->|Yes| USE_ENV[Use env var value]
+    CHECK_ENV -->|No| CHECK_DOCKER{Running in<br/>Docker?}
+    
+    CHECK_DOCKER -->|Yes| USE_DOCKER[Use http://prometheus:9090<br/>Docker network hostname]
+    CHECK_DOCKER -->|No| USE_HOST[Use http://localhost:9090<br/>Host network port mapping]
+    
+    USE_ENV --> CONNECT[Connect to Prometheus]
+    USE_DOCKER --> CONNECT
+    USE_HOST --> CONNECT
+    
+    style USE_DOCKER fill:#E3F2FD,stroke:#2196F3
+    style USE_HOST fill:#FFF3E0,stroke:#FF9800
+    style USE_ENV fill:#E8F5E9,stroke:#4CAF50
+```
+
+**Benefits:**
+
+✅ **Zero Configuration**: Works out of the box for local dev and Docker  
+✅ **Flexible Override**: Environment variable for custom deployments  
+✅ **Developer Experience**: New developers don't need special setup  
+✅ **Production Ready**: Same code works in all environments
+
+**When to Use This Pattern:**
+
+- Application runs both locally (`python app.py`) and in Docker
+- Services are deployed in Docker but app may run on host
+- Multi-environment deployments (dev, staging, production)
+- Microservices that need to discover other services
+
+**Example Use Cases in SSE Project:**
+
+| Service | Docker URL | Host URL | Auto-Detected |
+|---------|-----------|----------|---------------|
+| Prometheus | `http://prometheus:9090` | `http://localhost:9090` | ✅ Yes |
+| Redis | `redis-master:6379` | `localhost:6379` | Via env var |
+| Kafka | `kafka:9092` | `localhost:9092` | Via env var |
+
+**Configuration Priority:**
+
+1. **Explicit parameter** (testing): `PrometheusClient("http://custom:9090")`
+2. **Environment variable** (override): `PROMETHEUS_URL=http://prom.example.com`
+3. **Auto-detection** (default): Checks `/.dockerenv` or `/proc/1/cgroup`
+4. **Fallback** (safe default): `http://localhost:9090`
+
+**See Also:**
+- [prometheus_client.py](file:///d:/Generative%20AI%20Portfolio%20Projects/SSE/src/infrastructure/monitoring/prometheus_client.py) - Full implementation with detailed comments
+- [Docker Environment Detection](https://stackoverflow.com/questions/20010199/how-to-determine-if-a-process-runs-inside-lxc-docker) - Technical details
+
+---
+
+### 11. Clean Up Unused Networks
+
+```bash
+# Remove networks not used by any containers
+docker network prune
+```
+
+Prevents clutter and potential subnet conflicts.
+
+---
+
 ## References
 
 ### Official Documentation
