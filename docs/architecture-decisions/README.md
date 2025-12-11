@@ -25,6 +25,8 @@ This project demonstrates **production-grade engineering practices**:
 - **[Multi-Tier Caching Strategy](./001-multi-tier-caching.md)** - How we achieve 95% cache hit rate and 90% cost savings
 - **[Hash-Based Execution Tracking](./003-hash-based-sampling.md)** - How we reduced memory usage by 90% while maintaining observability
 - **[Async/Await Architecture](./012-async-await-architecture.md)** - How we handle 10,000+ concurrent connections with minimal resources
+- **[Custom LRU Cache Implementation](./015-custom-lru-cache-implementation.md)** - How we achieve <1ms L1 cache operations with bounded memory
+- **[Deterministic Hash-Based Sampling](./017-deterministic-hash-based-sampling.md)** - How we reduce execution tracking memory by 90% while maintaining observability
 
 ### Reliability & Resilience
 - **[Circuit Breaker with Redis](./002-circuit-breaker-redis.md)** - How we prevent cascading failures across distributed instances
@@ -38,9 +40,13 @@ This project demonstrates **production-grade engineering practices**:
 - **[Structured Logging with PII Redaction](./010-structured-logging-pii-redaction.md)** - How we protect user data and meet GDPR/CCPA compliance
 - **[Security Headers Middleware](./011-security-headers-middleware.md)** - How we defend against XSS, clickjacking, and MITM attacks
 - **[Validation Framework with Security Patterns](./013-validation-framework-security.md)** - How we prevent injection attacks (XSS, SQL, path traversal)
+- **[CORS Configuration Strategy](./019-cors-configuration-strategy.md)** - How we enable secure cross-origin access with environment-specific whitelisting
 
 ### Architecture & Design Patterns
 - **[FastAPI Dependency Injection](./009-fastapi-dependency-injection-pattern.md)** - How we achieve testable, type-safe, and maintainable code
+- **[Middleware Execution Order](./014-middleware-execution-order.md)** - How we ensure correct CORS, security, and error handling
+- **[Provider Factory Lazy Initialization](./016-provider-factory-lazy-initialization.md)** - How we achieve 198ms faster startup with on-demand provider creation
+- **[API Versioning Strategy](./020-api-versioning-strategy.md)** - How we maintain backward compatibility with URL path versioning
 
 ## 💡 How to Read These Documents
 
