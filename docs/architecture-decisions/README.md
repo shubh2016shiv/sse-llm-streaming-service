@@ -24,11 +24,23 @@ This project demonstrates **production-grade engineering practices**:
 ### Performance & Scalability
 - **[Multi-Tier Caching Strategy](./001-multi-tier-caching.md)** - How we achieve 95% cache hit rate and 90% cost savings
 - **[Hash-Based Execution Tracking](./003-hash-based-sampling.md)** - How we reduced memory usage by 90% while maintaining observability
+- **[Async/Await Architecture](./012-async-await-architecture.md)** - How we handle 10,000+ concurrent connections with minimal resources
 
 ### Reliability & Resilience
 - **[Circuit Breaker with Redis](./002-circuit-breaker-redis.md)** - How we prevent cascading failures across distributed instances
 - **[Provider Failover Algorithm](./004-provider-failover.md)** - How we achieve 99.9999% availability (six nines)
 - **[Queue Backpressure & Load Shedding](./005-queue-backpressure-load-shedding.md)** - How we prevent queue overflow and system overload
+- **[Connection Pool Backpressure](./006-connection-pool-backpressure.md)** - How we enforce connection limits and prevent server overload
+- **[Message Queue Failover](./007-message-queue-failover.md)** - How we achieve zero 429 errors with distributed queue failover
+- **[Event-Driven Pub/Sub Optimization](./008-event-driven-pubsub-optimization.md)** - How we reduced CPU usage by 100x with timeout-based blocking
+
+### Security & Compliance
+- **[Structured Logging with PII Redaction](./010-structured-logging-pii-redaction.md)** - How we protect user data and meet GDPR/CCPA compliance
+- **[Security Headers Middleware](./011-security-headers-middleware.md)** - How we defend against XSS, clickjacking, and MITM attacks
+- **[Validation Framework with Security Patterns](./013-validation-framework-security.md)** - How we prevent injection attacks (XSS, SQL, path traversal)
+
+### Architecture & Design Patterns
+- **[FastAPI Dependency Injection](./009-fastapi-dependency-injection-pattern.md)** - How we achieve testable, type-safe, and maintainable code
 
 ## 💡 How to Read These Documents
 
