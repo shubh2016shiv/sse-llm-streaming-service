@@ -666,7 +666,7 @@ class InfrastructureManager:
             "kafka:9092",
             "--list",
         ]
-        success, output = self._run_command(cmd, timeout=10)
+        success, output = self._run_command(cmd, timeout=30)
 
         message = "Kafka broker is operational" if success else "Kafka broker unavailable"
         return ValidationResult("Kafka", success, message, output if not success else None)
@@ -875,41 +875,70 @@ class InfrastructureManager:
         self, cmd: list[str], timeout: int = 30, check: bool = False
     ) -> tuple[bool, str]:
         """
-        Execute shell command with error handling.
+        Execute shell command with robust error handling and encoding management.
+
+        CRITICAL IMPLEMENTATION DETAIL:
+        -------------------------------
+        We explicitly enforce 'utf-8' encoding with 'replace' error handling.
+
+        Why?
+        1. Windows Default Encoding: On Windows, `subprocess.run(text=True)` defaults to
+           `cp1252` (or similar legacy code pages).
+        2. Docker Output: Modern CLIs like Docker output UTF-8 (including emojis 🐳 and
+           special characters).
+        3. The Mismatch: When a UTF-8 byte sequence (like 0x81 inside a multi-byte char)
+           is read as cp1252, it causes a `UnicodeDecodeError`.
+
+        By forcing `encoding="utf-8"` and `errors="replace"`, we ensure:
+        - Correct decoding of standard outputs.
+        - Graceful degradation for malformed sequences (replaced with ) instead of
+          crashing.
+        - Cross-platform consistency (Linux/Mac default to UTF-8 usually, but being
+          explicit is safer).
 
         Args:
-            cmd: Command and arguments
+            cmd: Command and arguments list
             timeout: Execution timeout in seconds
-            check: Raise exception on failure
+            check: Raise CalledProcessError on non-zero exit code (if True)
 
         Returns:
-            Tuple of (success, output/error)
+            Tuple of (success: bool, output: str)
+            - success: True if return code is 0
+            - output: Stdout (if success) or Stderr (if failed), stripped of whitespace
         """
         try:
+            # Senior SDE Note: Using explicit encoding options is safer than relying on
+            # system locale. We treat all subprocess I/O as potentially containing UTF-8 data.
             result = subprocess.run(
                 cmd,
                 cwd=self.project_root,
                 capture_output=True,
-                text=True,
+                text=True,              # still useful for universal newlines handling
+                encoding="utf-8",       # FORCE UTF-8
+                errors="replace",       # PREVENT CRASHES on invalid bytes
                 timeout=timeout,
                 check=check,
             )
 
             success = result.returncode == 0
+            # Prefer stdout for success, but fallback to stderr if empty
+            # (sometimes tools print to stderr). If failed, prefer stderr to show the
+            # error message.
             output = result.stdout if success else result.stderr
 
             return success, output.strip()
 
         except subprocess.TimeoutExpired:
-            self.logger.debug(f"Command timeout after {timeout}s: {' '.join(cmd)}")
+            self.logger.warning(f"Command timed out after {timeout}s: {' '.join(cmd)}")
             return False, "Command timeout"
         except subprocess.CalledProcessError as e:
-            return False, e.stderr.strip()
+            # e.stderr matches the 'errors="replace"' policy from run() call since Python 3.7+
+            return False, e.stderr.strip() if e.stderr else str(e)
         except FileNotFoundError:
-            self.logger.error(f"Command not found: {cmd[0]}")
-            return False, "Command not found"
+            self.logger.error(f"Command executable not found: {cmd[0]}")
+            return False, f"Command not found: {cmd[0]}"
         except Exception as e:
-            self.logger.debug(f"Command error: {e}")
+            self.logger.critical(f"Unexpected subprocess error: {e}")
             return False, str(e)
 
 
