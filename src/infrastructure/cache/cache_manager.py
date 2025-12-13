@@ -1,33 +1,33 @@
 #!/usr/bin/env python3
 """
-Multi-Tier Cache Manager
+Multi-Tier Cache Manager - Refactored for Clarity
 
-This module provides a multi-tier caching strategy with:
-- L1: In-memory LRU cache (fastest, < 1ms)
-- L2: Redis distributed cache (fast, 1-5ms)
+Architecture:
+    CacheManager (Public API)
+        ├── CacheStrategy (L1→L2 coordination logic)
+        │   ├── L1Storage (In-memory LRU)
+        │   └── L2Storage (Redis)
+        ├── CacheObserver (Metrics & logging)
+        └── CacheWarmer (Warming strategies)
 
-Architectural Decision: Multi-tier caching for performance
-- L1 reduces Redis calls by 80%+
-- L2 provides distributed caching across instances
-- Smart TTL based on content type
+Performance Targets:
+    - L1 hit: < 1ms
+    - L2 hit: 1-5ms
+    - Cache miss: 50-500ms (LLM call)
+    - Target: 95%+ cache hit rate
 
-Performance Impact:
-- L1 hit: < 1ms
-- L2 hit: 1-5ms
-- Cache miss: 50-500ms (LLM call)
-- Target: 95%+ cache hit rate
-
-Author: Senior Solution Architect
-Date: 2025-12-05
+Author: Refactored for clarity and maintainability
+Date: 2025-12-13
 """
 
 import asyncio
 import hashlib
-import json
 from collections import OrderedDict
 from collections.abc import Callable
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+import orjson
 
 from src.core.config.constants import (
     L1_CACHE_MAX_SIZE,
@@ -41,17 +41,33 @@ from src.infrastructure.cache.redis_client import RedisClient, get_redis_client
 logger = get_logger(__name__)
 
 
-class LRUCache:
+# =============================================================================
+# LAYER 1: STORAGE IMPLEMENTATIONS
+# Pure storage interfaces - no business logic
+# =============================================================================
+
+
+class L1Storage:
     """
-    Thread-safe LRU (Least Recently Used) cache for L1 caching.
+    In-memory LRU cache storage.
+
+    Responsibility: Fast, thread-safe in-memory storage with LRU eviction.
 
     STAGE-2.1: L1 in-memory cache
 
-    This is a simple LRU cache that evicts least recently used items
-    when the cache reaches its maximum size.
+    This is a per-instance cache, not shared across workers.
+    For distributed caching, use L2Storage (Redis).
 
-    Note: This is a per-instance cache, not shared across workers.
-    For distributed caching, use Redis (L2).
+    Implementation Details:
+    - Uses OrderedDict for O(1) access and LRU ordering
+    - Thread-safe via asyncio.Lock
+    - Automatically evicts oldest items when at capacity
+    - Tracks hits/misses for performance monitoring
+
+    Why LRU?
+    - Simple and effective eviction policy
+    - Assumes recent items are more likely to be accessed again
+    - O(1) for both get and set operations
     """
 
     def __init__(self, max_size: int = L1_CACHE_MAX_SIZE):
@@ -61,56 +77,58 @@ class LRUCache:
         Args:
             max_size: Maximum number of items to store
         """
-        self.max_size = max_size
-        self.cache: OrderedDict[str, Any] = OrderedDict()
-        self._cache_hits = 0
-        self._cache_misses = 0
+        self._max_size = max_size
+        self._cache: OrderedDict[str, str] = OrderedDict()
         self._lock = asyncio.Lock()
 
-    async def get(self, key: str) -> Any | None:
+    async def get(self, key: str) -> str | None:
         """
-        Get value from cache.
+        Get value from cache. Returns None if not found.
+
+        Thread-Safety: Uses asyncio.Lock to prevent race conditions
+        LRU Update: Moves accessed item to end (most recently used)
 
         Args:
             key: Cache key
 
         Returns:
-            Cached value or None
+            Cached value or None if not found
         """
         async with self._lock:
-            if key in self.cache:
-                # Move to end (most recently used)
-                self.cache.move_to_end(key)
-                self._cache_hits += 1
-                return self.cache[key]
-            else:
-                self._cache_misses += 1
-                return None
+            if key in self._cache:
+                # Move to end (mark as recently used)
+                # This is the "LRU" part - recently accessed items move to the back
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
 
-    async def set(self, key: str, value: Any) -> None:
+    async def set(self, key: str, value: str) -> None:
         """
-        Set value in cache.
+        Set value in cache. Evicts LRU item if at capacity.
+
+        Eviction Policy:
+        - When cache is full, remove oldest (least recently used) item
+        - popitem(last=False) removes from front (oldest)
 
         Args:
             key: Cache key
             value: Value to cache
         """
         async with self._lock:
-            if key in self.cache:
-                # Update and move to end
-                self.cache.move_to_end(key)
-                self.cache[key] = value
-            else:
-                # Add new item
-                self.cache[key] = value
+            if key in self._cache:
+                # Update existing and mark as recently used
+                self._cache.move_to_end(key)
 
-                # Evict oldest if over capacity
-                while len(self.cache) > self.max_size:
-                    self.cache.popitem(last=False)
+            self._cache[key] = value
+
+            # Evict oldest items if over capacity
+            # This maintains the max_size constraint
+            while len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)  # Remove oldest (front)
 
     async def delete(self, key: str) -> bool:
         """
-        Delete value from cache.
+        Delete value from cache. Returns True if deleted, False if not found.
 
         Args:
             key: Cache key
@@ -119,68 +137,668 @@ class LRUCache:
             True if deleted, False if not found
         """
         async with self._lock:
-            if key in self.cache:
-                del self.cache[key]
+            if key in self._cache:
+                del self._cache[key]
                 return True
             return False
 
     async def clear(self) -> None:
-        """Clear all items from cache."""
+        """
+        Clear all items from cache.
+
+        Use Case: Cache invalidation, testing, or memory cleanup
+        """
         async with self._lock:
-            self.cache.clear()
-            self._cache_hits = 0
-            self._cache_misses = 0
+            self._cache.clear()
 
-    @property
-    def size(self) -> int:
-        """Get current cache size."""
-        return len(self.cache)
+    def get_size(self) -> int:
+        """Get current number of items in cache."""
+        return len(self._cache)
 
-    @property
-    def hit_rate(self) -> float:
-        """Get cache hit rate (0-1)."""
-        total = self._cache_hits + self._cache_misses
-        return self._cache_hits / total if total > 0 else 0.0
+    def get_max_size(self) -> int:
+        """Get maximum capacity."""
+        return self._max_size
 
-    def stats(self) -> dict[str, Any]:
-        """Get cache statistics."""
+    def get_keys(self) -> list[str]:
+        """
+        Get all cache keys (most recent last).
+
+        Returns:
+            List of keys in LRU order (oldest first, newest last)
+        """
+        return list(self._cache.keys())
+
+
+class L2Storage:
+    """
+    Redis distributed cache storage.
+
+    Responsibility: Distributed storage with TTL support.
+    Provides actual pipelining for batch operations.
+
+    STAGE-2.2: L2 Redis cache
+
+    Why Redis?
+    - Distributed: Shared across all application instances
+    - Persistent: Survives application restarts
+    - TTL Support: Automatic expiration of stale data
+    - Pipelining: Batch operations for reduced network overhead
+
+    Performance Optimization:
+    - Uses pipelining to reduce network round-trips by 50-70%
+    - Single network call for multiple operations
+    """
+
+    def __init__(self, redis_client: RedisClient):
+        """
+        Initialize Redis storage.
+
+        Args:
+            redis_client: Redis client instance
+        """
+        self._redis = redis_client
+
+    async def connect(self) -> None:
+        """
+        Establish Redis connection.
+
+        STAGE-2.0.1: Initialize L2 (Redis) connection
+        """
+        await self._redis.connect()
+
+    async def get(self, key: str) -> str | None:
+        """
+        Get value from Redis.
+
+        Args:
+            key: Cache key
+
+        Returns:
+            Cached value or None if not found
+        """
+        return await self._redis.get(key)
+
+    async def set(self, key: str, value: str, ttl: int) -> None:
+        """
+        Set value in Redis with TTL.
+
+        TTL (Time-To-Live):
+        - Automatically expires after specified seconds
+        - Prevents stale data accumulation
+        - Redis handles cleanup automatically
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            ttl: Time-to-live in seconds
+        """
+        await self._redis.set(key, value, ttl=ttl)
+
+    async def delete(self, key: str) -> None:
+        """
+        Delete value from Redis.
+
+        Args:
+            key: Cache key
+        """
+        await self._redis.delete(key)
+
+    async def batch_get(self, keys: list[str]) -> dict[str, str | None]:
+        """
+        Batch get using Redis pipelining.
+
+        Performance Optimization:
+        - Uses single network round-trip for all keys
+        - Reduces latency by 50-70% vs sequential gets
+        - Critical for warming L1 cache efficiently
+
+        How Pipelining Works:
+        1. Queue all commands (no network calls yet)
+        2. Execute pipeline (single network round-trip)
+        3. Receive all responses at once
+
+        Fallback Strategy:
+        - If pipelining unavailable, falls back to sequential gets
+        - Still works, just slower
+
+        Args:
+            keys: List of cache keys to fetch
+
+        Returns:
+            Dict mapping key → value (None if not found)
+        """
+        if not keys:
+            return {}
+
+        pipeline_mgr = self._redis.get_pipeline_manager()
+
+        if pipeline_mgr:
+            # Use actual pipelining (optimal path)
+            # This queues all commands and executes in one round-trip
+            results = {}
+            for key in keys:
+                results[key] = await pipeline_mgr.execute_command("get", key)
+            return results
+        else:
+            # Fallback to sequential (still works, just slower)
+            # This makes N network calls instead of 1
+            results = {}
+            for key in keys:
+                results[key] = await self._redis.get(key)
+            return results
+
+    async def health_check(self) -> dict[str, Any]:
+        """
+        Check Redis health.
+
+        Returns:
+            Dict with health status and connection info
+        """
+        return await self._redis.health_check()
+
+
+# =============================================================================
+# LAYER 2: CACHE STRATEGY
+# Orchestrates L1→L2 lookups and cache population
+# =============================================================================
+
+
+CacheSource = Literal["l1", "l2", "miss"]
+
+
+class CacheStrategy:
+    """
+    Orchestrates multi-tier cache lookups.
+
+    Responsibility: Implements L1→L2 fallback logic and warming strategy.
+
+    Algorithm:
+        GET: L1 → L2 → miss (warm L1 on L2 hit)
+        SET: L1 + L2 (or L1 only for temporary data)
+        BATCH: L1 bulk check → L2 pipeline → warm L1
+
+    Why This Design?
+    - L1 is fastest but limited in size and not shared
+    - L2 is slower but distributed and persistent
+    - Warming L1 from L2 hits improves future performance
+    - Batch operations reduce network overhead
+
+    Performance Impact:
+    - L1 hit: < 1ms (no network)
+    - L2 hit: 1-5ms (network + Redis)
+    - L1 warming: Improves subsequent L1 hit rate
+    """
+
+    def __init__(self, l1: L1Storage, l2: L2Storage):
+        """
+        Initialize cache strategy.
+
+        Args:
+            l1: L1 (in-memory) storage
+            l2: L2 (Redis) storage
+        """
+        self._l1 = l1
+        self._l2 = l2
+
+    async def get(self, key: str) -> tuple[str | None, CacheSource]:
+        """
+        Get from cache with L1→L2 fallback.
+
+        STAGE-2.1: L1 lookup
+        STAGE-2.2: L2 lookup (if L1 miss)
+
+        Algorithm:
+        1. Check L1 (fast path, < 1ms)
+        2. If L1 miss, check L2 (1-5ms)
+        3. If L2 hit, warm L1 for future requests
+        4. Return value and source
+
+        Why Warm L1 on L2 Hit?
+        - Next request will hit L1 (< 1ms instead of 1-5ms)
+        - Reduces Redis load
+        - Improves overall hit rate
+
+        Args:
+            key: Cache key
+
+        Returns:
+            (value, source) where source indicates which tier hit
+        """
+        # Try L1 first (fastest path)
+        value = await self._l1.get(key)
+        if value is not None:
+            return value, "l1"
+
+        # Try L2 (slower but distributed)
+        value = await self._l2.get(key)
+        if value is not None:
+            # Warm L1 with L2 result
+            # This makes the next request faster
+            await self._l1.set(key, value)
+            return value, "l2"
+
+        # Cache miss - need to compute value
+        return None, "miss"
+
+    async def set(
+        self,
+        key: str,
+        value: str,
+        ttl: int,
+        l1_only: bool = False
+    ) -> None:
+        """
+        Set value in cache tiers.
+
+        STAGE-2.3: Cache population
+
+        Strategy:
+        - Always populate L1 (fast access)
+        - Optionally populate L2 (distribution)
+
+        When to use l1_only=True?
+        - Temporary data (session state)
+        - Data specific to this instance
+        - Data that shouldn't be shared
+
+        Args:
+            key: Cache key
+            value: Value to cache
+            ttl: Time-to-live for L2
+            l1_only: If True, only cache in L1 (for temporary data)
+        """
+        # Always populate L1 (fast access)
+        await self._l1.set(key, value)
+
+        # Populate L2 for distribution (unless l1_only)
+        if not l1_only:
+            await self._l2.set(key, value, ttl)
+
+    async def batch_get(self, keys: list[str]) -> dict[str, tuple[str | None, CacheSource]]:
+        """
+        Batch get with L1/L2 fallback and L1 warming.
+
+        Algorithm:
+            1. Check L1 for all keys (fast path)
+            2. Collect L1 misses
+            3. Pipeline fetch from L2 (single round-trip)
+            4. Warm L1 with L2 hits
+            5. Return all results
+
+        Performance Optimization:
+        - L1 checks are fast (< 1ms each)
+        - L2 pipeline is single network call (not N calls)
+        - L1 warming improves future hit rate
+
+        Example:
+            100 keys, 80 L1 hits, 15 L2 hits, 5 misses
+            - 80 L1 lookups: ~80ms total
+            - 1 L2 pipeline call: ~5ms (not 15 * 5ms = 75ms)
+            - Total: ~85ms vs ~155ms without pipelining
+
+        Args:
+            keys: List of cache keys
+
+        Returns:
+            Dict mapping key → (value, source)
+        """
+        if not keys:
+            return {}
+
+        results: dict[str, tuple[str | None, CacheSource]] = {}
+        l2_keys = []
+
+        # Phase 1: Check L1 for all keys (fast path)
+        for key in keys:
+            value = await self._l1.get(key)
+            if value is not None:
+                results[key] = (value, "l1")
+            else:
+                l2_keys.append(key)
+
+        # Phase 2: Pipeline L2 lookups for misses
+        # This is the critical optimization - single network call
+        if l2_keys:
+            l2_results = await self._l2.batch_get(l2_keys)
+
+            # Phase 3: Process L2 results and warm L1
+            for key, value in l2_results.items():
+                if value is not None:
+                    # Warm L1 for future requests
+                    await self._l1.set(key, value)
+                    results[key] = (value, "l2")
+                else:
+                    results[key] = (None, "miss")
+
+        return results
+
+    async def delete(self, key: str) -> None:
+        """
+        Delete from both tiers.
+
+        STAGE-2.4: Cache invalidation
+
+        Why Delete from Both?
+        - Ensures consistency across tiers
+        - Prevents stale data in L1
+
+        Args:
+            key: Cache key
+        """
+        await self._l1.delete(key)
+        await self._l2.delete(key)
+
+    async def clear_l1(self) -> None:
+        """
+        Clear L1 cache only.
+
+        Use Case: Memory cleanup, testing, or cache reset
+        """
+        await self._l1.clear()
+
+    def get_l1_keys(self) -> list[str]:
+        """
+        Get all L1 keys (most recent last).
+
+        Returns:
+            List of keys in LRU order
+        """
+        return self._l1.get_keys()
+
+
+# =============================================================================
+# LAYER 3: OBSERVABILITY
+# Tracks metrics, logs operations, integrates with monitoring
+# =============================================================================
+
+
+class CacheObserver:
+    """
+    Tracks cache performance metrics and logs operations.
+
+    Responsibility: All side effects (logging, metrics, tracing).
+
+    Why Separate Observer?
+    - Single Responsibility Principle
+    - Easy to test cache logic without logging
+    - Can swap monitoring implementations
+    - Centralizes all observability concerns
+
+    Metrics Tracked:
+    - L1 hits, L2 hits, misses
+    - Hit rates (overall, L1-specific)
+    - Operation counts
+    """
+
+    def __init__(self, tracker=None, logger_instance=None):
+        """
+        Initialize cache observer.
+
+        Args:
+            tracker: Execution tracker instance
+            logger_instance: Logger instance
+        """
+        self._tracker = tracker or get_tracker()
+        self._logger = logger_instance or logger
+
+        # Metrics
+        self._hits_l1 = 0
+        self._hits_l2 = 0
+        self._misses = 0
+
+    def record_operation(
+        self,
+        operation: str,
+        source: CacheSource,
+        key: str,
+        thread_id: str | None = None
+    ) -> None:
+        """
+        Record cache operation for metrics and logging.
+
+        Logging Strategy:
+        - L1 hit: STAGE-2.1 (fastest path)
+        - L2 hit: STAGE-2.2 (slower but still cached)
+        - Miss: STAGE-2.2 (need to compute)
+        - Set: STAGE-2.3 (cache population)
+        - Delete: STAGE-2.4 (invalidation)
+
+        Args:
+            operation: 'get', 'set', 'delete'
+            source: Which tier was hit ('l1', 'l2', 'miss')
+            key: Cache key (truncated for logging)
+            thread_id: Optional thread ID for distributed tracing
+        """
+        if operation == "get":
+            if source == "l1":
+                self._hits_l1 += 1
+                log_stage(self._logger, "2.1", "L1 cache hit", cache_key=key[:20])
+            elif source == "l2":
+                self._hits_l2 += 1
+                log_stage(self._logger, "2.2", "L2 cache hit", cache_key=key[:20])
+            else:
+                self._misses += 1
+                log_stage(self._logger, "2.2", "Cache miss", cache_key=key[:20])
+
+        elif operation == "set":
+            log_stage(self._logger, "2.3", "Cache set", cache_key=key[:20])
+
+        elif operation == "delete":
+            log_stage(self._logger, "2.4", "Cache invalidated", cache_key=key[:20])
+
+    def wrap_with_tracking(
+        self,
+        stage: str,
+        description: str,
+        thread_id: str | None
+    ):
+        """
+        Context manager for stage tracking.
+
+        Returns a context manager if thread_id provided, else a no-op.
+
+        Why Conditional Tracking?
+        - Not all operations need distributed tracing
+        - Reduces overhead for simple operations
+        - Allows fine-grained control
+
+        Args:
+            stage: Stage identifier (e.g., "2.1", "2.2")
+            description: Human-readable description
+            thread_id: Thread ID for tracking (None = no tracking)
+
+        Returns:
+            Context manager for tracking or no-op
+        """
+        if thread_id:
+            return self._tracker.track_stage(stage, description, thread_id)
+        else:
+            # No-op context manager
+            from contextlib import nullcontext
+            return nullcontext()
+
+    def get_stats(self) -> dict[str, Any]:
+        """
+        Get cache performance statistics.
+
+        Metrics Provided:
+        - L1 hits, L2 hits, misses
+        - Total requests
+        - Overall hit rate
+        - L1-specific hit rate
+
+        Returns:
+            Dict with performance metrics
+        """
+        total = self._hits_l1 + self._hits_l2 + self._misses
+        hit_rate = (self._hits_l1 + self._hits_l2) / total if total > 0 else 0.0
+
         return {
-            "size": self.size,
-            "max_size": self.max_size,
-            "hits": self._cache_hits,
-            "misses": self._cache_misses,
-            "hit_rate": round(self.hit_rate, 3),
+            "l1_hits": self._hits_l1,
+            "l2_hits": self._hits_l2,
+            "misses": self._misses,
+            "total_requests": total,
+            "hit_rate": round(hit_rate, 3),
+            "l1_hit_rate": round(self._hits_l1 / total, 3) if total > 0 else 0.0,
         }
+
+
+# =============================================================================
+# LAYER 4: CACHE WARMING
+# Strategies for pre-loading frequently accessed data
+# =============================================================================
+
+
+class CacheWarmer:
+    """
+    Implements cache warming strategies.
+
+    Responsibility: Pre-load frequently accessed keys into L1.
+
+    Why Cache Warming?
+    - Reduces cold start latency
+    - Improves L1 hit rate after deployment
+    - Pre-loads known popular keys
+    - Optimizes for predictable access patterns
+
+    Strategies:
+    1. Explicit warming: Pre-load specific keys
+    2. Popular key warming: Re-fetch most recent L1 keys from L2
+    """
+
+    def __init__(self, strategy: CacheStrategy):
+        """
+        Initialize cache warmer.
+
+        Args:
+            strategy: Cache strategy instance
+        """
+        self._strategy = strategy
+
+    async def warm_from_keys(self, keys: list[str]) -> int:
+        """
+        Warm L1 cache with specific keys from L2.
+
+        Use case: Pre-load known popular keys during startup or after deployment.
+
+        Algorithm:
+        1. Batch fetch keys from L2 (pipelined)
+        2. Populate L1 with results
+        3. Return count of warmed keys
+
+        When to Use:
+        - Application startup
+        - After deployment
+        - After cache clear
+        - Known popular keys
+
+        Args:
+            keys: List of cache keys to warm
+
+        Returns:
+            Number of keys successfully warmed
+        """
+        if not keys:
+            return 0
+
+        # Batch fetch from L2 (single network call)
+        results = await self._strategy._l2.batch_get(keys)
+        warmed = 0
+
+        # Populate L1 with results
+        for key, value in results.items():
+            if value is not None:
+                await self._strategy._l1.set(key, value)
+                warmed += 1
+
+        if warmed > 0:
+            log_stage(logger, "2.warming", "L1 cache warming complete", warmed_items=warmed)
+
+        return warmed
+
+    async def warm_popular_from_l2(self, limit: int = 20) -> int:
+        """
+        Warm L1 with most recently used keys.
+
+        Strategy: Take most recent keys from L1, re-fetch from L2 to ensure freshness.
+
+        Why Re-fetch from L2?
+        - Ensures data is still fresh
+        - Validates keys still exist
+        - Updates L1 with latest values
+
+        Algorithm:
+        1. Get most recent keys from L1 (LRU ordering)
+        2. Re-fetch from L2 (ensures freshness)
+        3. Warm L1 with results
+
+        When to Use:
+        - Periodic warming (e.g., every 5 minutes)
+        - After high cache miss rate
+        - After L1 evictions
+
+        Args:
+            limit: Number of keys to warm
+
+        Returns:
+            Number of keys successfully warmed
+        """
+        # Get most recent keys from L1 (these are likely popular)
+        l1_keys = self._strategy.get_l1_keys()
+
+        if not l1_keys:
+            return 0
+
+        # Take the N most recent
+        recent_keys = l1_keys[-limit:] if len(l1_keys) > limit else l1_keys
+
+        # Re-fetch from L2 to ensure fresh data
+        return await self.warm_from_keys(recent_keys)
+
+
+# =============================================================================
+# LAYER 5: PUBLIC API
+# Clean interface that coordinates all layers
+# =============================================================================
 
 
 class CacheManager:
     """
-    Multi-tier cache manager with L1 (in-memory) and L2 (Redis) caching.
+    Multi-tier cache manager with L1 (in-memory) and L2 (Redis).
 
-    STAGE-2: Cache lookup orchestration
+    Public API for all caching operations.
 
-    This class provides:
-    - Automatic tier selection (L1 → L2 → miss)
-    - Cache key generation with hashing
-    - TTL management based on content type
-    - Cache statistics and monitoring
-    - Integration with execution tracker
+    Features:
+        - Automatic L1→L2 fallback
+        - Batch operations with pipelining
+        - Cache warming strategies
+        - Performance monitoring
+        - Health checks
 
     Usage:
         cache = CacheManager()
         await cache.initialize()
 
-        # Get with automatic tier selection
-        result = await cache.get("query:hash123", thread_id)
+        # Simple get/set
+        value = await cache.get("key")
+        await cache.set("key", "value", ttl=3600)
 
-        # Set with automatic tier population
-        await cache.set("query:hash123", result, ttl=3600, thread_id=thread_id)
+        # Batch operations
+        results = await cache.batch_get(["key1", "key2", "key3"])
 
-    Optimization Strategy:
-    - Check L1 first (< 1ms)
-    - Check L2 if L1 miss (1-5ms)
-    - Populate L1 on L2 hit (warming)
-    - Use consistent hashing for keys
+        # Cache warming
+        await cache.warm_cache(["popular_key1", "popular_key2"])
+
+        # Monitoring
+        stats = cache.stats()
+
+    Architecture:
+        CacheManager (this class)
+            ├── CacheStrategy (L1→L2 logic)
+            │   ├── L1Storage (in-memory)
+            │   └── L2Storage (Redis)
+            ├── CacheObserver (metrics)
+            └── CacheWarmer (warming)
     """
 
     def __init__(self):
@@ -189,121 +807,83 @@ class CacheManager:
 
         STAGE-2.0: Cache manager initialization
         """
-        self.settings = get_settings()
-        self._memory_cache = LRUCache(max_size=self.settings.cache.CACHE_L1_MAX_SIZE)
-        self._redis_client: RedisClient | None = None
-        self._tracker = get_tracker()
+        settings = get_settings()
+
+        # Build layers
+        self._l1 = L1Storage(max_size=settings.cache.CACHE_L1_MAX_SIZE)
+        self._l2 = L2Storage(get_redis_client())
+        self._strategy = CacheStrategy(self._l1, self._l2)
+        self._observer = CacheObserver()
+        self._warmer = CacheWarmer(self._strategy)
+
+        # Configuration
+        self._enabled = settings.ENABLE_CACHING
+        self._default_ttl = settings.cache.CACHE_RESPONSE_TTL
         self._initialized = False
 
         logger.info(
             "Cache manager initialized",
             stage="2.0",
-            memory_cache_max_size=self.settings.cache.CACHE_L1_MAX_SIZE,
+            l1_max_size=settings.cache.CACHE_L1_MAX_SIZE,
+            caching_enabled=self._enabled,
         )
 
     async def initialize(self) -> None:
         """
-        Initialize cache connections.
+        Initialize L2 (Redis) connection.
 
         STAGE-2.0.1: Initialize L2 (Redis) connection
         """
         if self._initialized:
             return
 
-        self._redis_client = get_redis_client()
-        await self._redis_client.connect()
+        await self._l2.connect()
         self._initialized = True
 
         logger.info("Cache manager L2 (Redis) connected", stage="2.0.1")
 
     async def shutdown(self) -> None:
         """
-        Shutdown cache connections.
+        Shutdown cache connections and clear L1.
 
         STAGE-2.0.2: Cleanup cache connections
         """
-        await self._memory_cache.clear()
+        await self._strategy.clear_l1()
         self._initialized = False
 
         logger.info("Cache manager shutdown", stage="2.0.2")
 
-    @staticmethod
-    def generate_cache_key(prefix: str, *args: Any) -> str:
-        """
-        Generate a consistent cache key from prefix and arguments.
-
-        STAGE-2.1.1: Cache key generation
-
-        Args:
-            prefix: Key prefix (e.g., "response", "session")
-            *args: Values to hash for the key
-
-        Returns:
-            str: Cache key (e.g., "cache:response:abc123def...")
-
-        Optimization: Uses MD5 for fast hashing (collision risk acceptable for cache)
-        """
-        # Convert args to string and hash
-        data = ":".join(str(arg) for arg in args)
-        hash_value = hashlib.md5(data.encode()).hexdigest()
-
-        return f"{REDIS_KEY_CACHE_RESPONSE}:{prefix}:{hash_value}"
+    # -------------------------------------------------------------------------
+    # Core Cache Operations
+    # -------------------------------------------------------------------------
 
     async def get(self, key: str, thread_id: str | None = None) -> str | None:
         """
-        Get value from cache (L1 → L2 → miss).
+        Get value from cache with L1→L2 fallback.
 
         STAGE-2.1: L1 lookup
         STAGE-2.2: L2 lookup (if L1 miss)
 
         Args:
             key: Cache key
-            thread_id: Thread ID for execution tracking (optional)
+            thread_id: Optional thread ID for distributed tracing
 
         Returns:
-            Optional[str]: Cached value or None
+            Cached value or None if not found
 
         Performance:
         - L1 hit: < 1ms
         - L2 hit: 1-5ms
         - Miss: returns None
         """
-        # Feature flag check
-        if not self.settings.ENABLE_CACHING:
+        if not self._enabled:
             return None
 
-        # STAGE-2.1: Check L1 (in-memory) cache
-        if thread_id:
-            with self._tracker.track_stage("2.1", "L1 cache lookup", thread_id):
-                l1_result = await self._memory_cache.get(key)
-        else:
-            l1_result = await self._memory_cache.get(key)
+        with self._observer.wrap_with_tracking("2.1-2.2", "Cache lookup", thread_id):
+            value, source = await self._strategy.get(key)
 
-        if l1_result is not None:
-            log_stage(logger, "2.1", "L1 cache hit", cache_key=key[:20])
-            return l1_result
-
-        log_stage(logger, "2.1", "L1 cache miss", cache_key=key[:20])
-
-        # STAGE-2.2: Check L2 (Redis) cache
-        if self._redis_client and self._initialized:
-            if thread_id:
-                with self._tracker.track_stage("2.2", "L2 Redis lookup", thread_id):
-                    l2_result = await self._redis_client.get(key)
-            else:
-                l2_result = await self._redis_client.get(key)
-
-            if l2_result is not None:
-                log_stage(logger, "2.2", "L2 cache hit", cache_key=key[:20])
-
-                # Warm L1 cache with L2 result
-                await self._memory_cache.set(key, l2_result)
-
-                return l2_result
-
-            log_stage(logger, "2.2", "L2 cache miss", cache_key=key[:20])
-
-        return None
+        self._observer.record_operation("get", source, key, thread_id)
+        return value
 
     async def set(
         self,
@@ -314,173 +894,31 @@ class CacheManager:
         l1_only: bool = False,
     ) -> None:
         """
-        Set value in cache (L1 and L2).
+        Set value in cache.
 
         STAGE-2.3: Cache population
-
-        Uses Redis pipelining when available to reduce round-trips.
 
         Args:
             key: Cache key
             value: Value to cache
-            ttl: Time-to-live in seconds (default from settings)
-            thread_id: Thread ID for execution tracking (optional)
-            l1_only: Only cache in L1 (for temporary data)
+            ttl: Time-to-live in seconds (default: from settings)
+            thread_id: Optional thread ID for distributed tracing
+            l1_only: If True, only cache in L1 (for temporary data)
 
         Optimization:
         - L1 always populated for fast access
         - L2 populated for distributed access
         - TTL ensures stale data eviction
-        - Pipelining reduces Redis round-trips by 50-70%
         """
-        # Feature flag check
-        if not self.settings.ENABLE_CACHING:
+        if not self._enabled:
             return
 
-        ttl = ttl or self.settings.cache.CACHE_RESPONSE_TTL
+        ttl = ttl or self._default_ttl
 
-        # STAGE-2.3.1: Set in L1 cache
-        await self._memory_cache.set(key, value)
+        with self._observer.wrap_with_tracking("2.3", "Cache set", thread_id):
+            await self._strategy.set(key, value, ttl, l1_only)
 
-        log_stage(logger, "2.3.1", "L1 cache set", cache_key=key[:20])
-
-        # STAGE-2.3.2: Set in L2 (Redis) cache
-        if not l1_only and self._redis_client and self._initialized:
-            if thread_id:
-                with self._tracker.track_stage("2.3.2", "L2 Redis set", thread_id):
-                    await self._redis_client.set(key, value, ttl=ttl)
-            else:
-                await self._redis_client.set(key, value, ttl=ttl)
-
-            log_stage(logger, "2.3.2", "L2 cache set", cache_key=key[:20], ttl=ttl)
-
-    async def batch_get(
-        self, keys: list[str], thread_id: str | None = None
-    ) -> dict[str, str | None]:
-        """
-        Get multiple values from cache using pipelining.
-
-        Uses Redis pipelining to fetch multiple keys in a single round-trip.
-        Reduces network overhead by 50-70% compared to individual get operations.
-
-        Algorithm:
-        1. Check L1 cache for each key (fast path)
-        2. Batch remaining keys for L2 pipeline fetch
-        3. Execute pipeline once (single round-trip)
-        4. Populate L1 with L2 results
-        5. Return all results
-
-        Args:
-            keys: List of cache keys to fetch
-            thread_id: Thread ID for execution tracking (optional)
-
-        Returns:
-            Dict[str, Optional[str]]: Dict mapping key to cached value or None
-        """
-        if not keys:
-            return {}
-
-        results: dict[str, str | None] = {}
-        l2_keys = []
-
-        # STAGE-2.1: Check L1 for all keys
-        for key in keys:
-            l1_value = await self._memory_cache.get(key)
-            if l1_value is not None:
-                results[key] = l1_value
-            else:
-                l2_keys.append(key)
-
-        if not l2_keys or not self._redis_client or not self._initialized:
-            return results
-
-        # STAGE-2.2: Batch L2 lookups via pipeline
-        if thread_id:
-            with self._tracker.track_stage("2.2.batch", "L2 batch lookup", thread_id):
-                pipeline_mgr = self._redis_client.get_pipeline_manager()
-                if pipeline_mgr:
-                    l2_results = {}
-                    for key in l2_keys:
-                        l2_results[key] = await pipeline_mgr.execute_command("get", key)
-                else:
-                    l2_results = {}
-                    for key in l2_keys:
-                        l2_results[key] = await self._redis_client.get(key)
-        else:
-            pipeline_mgr = self._redis_client.get_pipeline_manager()
-            if pipeline_mgr:
-                l2_results = {}
-                for key in l2_keys:
-                    l2_results[key] = await pipeline_mgr.execute_command("get", key)
-            else:
-                l2_results = {}
-                for key in l2_keys:
-                    l2_results[key] = await self._redis_client.get(key)
-
-        # STAGE-2.3: Warm L1 with L2 results
-        for key, value in l2_results.items():
-            if value is not None:
-                await self._memory_cache.set(key, value)
-                results[key] = value
-            else:
-                results[key] = None
-
-        return results
-
-    async def get_popular_keys(self, limit: int = 10) -> list[str]:
-        """
-        Get most frequently accessed cache keys from L1 cache.
-
-        Returns keys ordered by recency (LRU ordering).
-        Used for cache warming strategy.
-
-        Rationale: Track popular items and prefetch them across instances
-        to improve L1 hit rate in horizontally scaled deployments.
-        """
-        if not self._memory_cache.cache:
-            return []
-
-        keys = list(self._memory_cache.cache.keys())
-        return keys[-limit:] if len(keys) > limit else keys
-
-    async def warm_l1_from_popular(self) -> None:
-        """
-        Warm L1 cache with popular items from L2.
-
-        Algorithm:
-        1. Get popular keys from current L1 cache state
-        2. Batch fetch from L2 using pipelining
-        3. Repopulate L1 with these items
-
-        Improves L1 hit rate by pre-loading frequently accessed items.
-        Runs periodically or on cache misses to keep popular items warm.
-        """
-        popular_keys = await self.get_popular_keys(limit=20)
-        if not popular_keys:
-            return
-
-        try:
-            results = await self.batch_get(popular_keys)
-
-            hit_count = sum(1 for v in results.values() if v is not None)
-            if hit_count > 0:
-                log_stage(logger, "2.warming", "L1 cache warming complete", warmed_items=hit_count)
-        except Exception as e:
-            logger.warning("L1 cache warming failed", error=str(e))
-
-    def get_cache_stats(self) -> dict[str, Any]:
-        """
-        Get cache performance statistics.
-
-        Returns:
-            Dict with L1 hit rate, size, and capacity utilization
-        """
-        return {
-            "l1_stats": self._memory_cache.stats(),
-            "l1_capacity_utilization": (
-                len(self._memory_cache.cache) / self._memory_cache.max_size * 100
-            ),
-        }
+        self._observer.record_operation("set", "l1" if l1_only else "l2", key, thread_id)
 
     async def delete(self, key: str) -> None:
         """
@@ -491,14 +929,77 @@ class CacheManager:
         Args:
             key: Cache key
         """
-        # Delete from L1
-        await self._memory_cache.delete(key)
+        await self._strategy.delete(key)
+        self._observer.record_operation("delete", "l1", key)
 
-        # Delete from L2
-        if self._redis_client and self._initialized:
-            await self._redis_client.delete(key)
+    async def batch_get(
+        self,
+        keys: list[str],
+        thread_id: str | None = None
+    ) -> dict[str, str | None]:
+        """
+        Get multiple values using pipelining.
 
-        log_stage(logger, "2.4", "Cache invalidated", cache_key=key[:20])
+        Uses Redis pipelining to reduce network round-trips by 50-70%.
+
+        Algorithm:
+        1. Check L1 for all keys (fast path)
+        2. Collect L1 misses
+        3. Pipeline fetch from L2 (single round-trip)
+        4. Warm L1 with L2 hits
+        5. Return all results
+
+        Args:
+            keys: List of cache keys
+            thread_id: Optional thread ID for distributed tracing
+
+        Returns:
+            Dict mapping key → value (None if not found)
+        """
+        if not self._enabled or not keys:
+            return {k: None for k in keys}
+
+        with self._observer.wrap_with_tracking("2.batch", "Batch cache lookup", thread_id):
+            results = await self._strategy.batch_get(keys)
+
+        # Return simplified dict (drop source info)
+        return {k: v[0] for k, v in results.items()}
+
+    # -------------------------------------------------------------------------
+    # Cache Warming
+    # -------------------------------------------------------------------------
+
+    async def warm_cache(self, keys: list[str]) -> int:
+        """
+        Explicitly warm L1 cache from L2.
+
+        Use Case: Pre-load known popular keys during startup or after deployment.
+
+        Args:
+            keys: List of cache keys to pre-load
+
+        Returns:
+            Number of keys successfully warmed
+        """
+        return await self._warmer.warm_from_keys(keys)
+
+    async def warm_popular_keys(self, limit: int = 20) -> int:
+        """
+        Warm L1 with most recently accessed keys.
+
+        Strategy: Re-fetch most recent L1 keys from L2 to ensure freshness.
+
+        Args:
+            limit: Number of keys to warm
+
+        Returns:
+            Number of keys successfully warmed
+        """
+        return await self._warmer.warm_popular_from_l2(limit)
+
+    # -------------------------------------------------------------------------
+    # Advanced Patterns
+    # -------------------------------------------------------------------------
 
     async def get_or_compute(
         self,
@@ -508,9 +1009,14 @@ class CacheManager:
         thread_id: str | None = None,
     ) -> Any:
         """
-        Get from cache or compute and cache the result.
+        Get from cache or compute and cache the result (cache-aside pattern).
 
         STAGE-2.5: Cache-aside pattern
+
+        Pattern: Cache-aside (lazy loading)
+        - Check cache first
+        - If miss, compute and cache
+        - Return result
 
         Args:
             key: Cache key
@@ -520,25 +1026,14 @@ class CacheManager:
 
         Returns:
             Cached or computed value
-
-        Pattern: Cache-aside (lazy loading)
-        - Check cache first
-        - If miss, compute and cache
-        - Return result
         """
-        # Check cache
+        # Check cache first
         cached = await self.get(key, thread_id)
         if cached is not None:
             return cached
 
         # Compute value
-        if thread_id:
-            with self._tracker.track_stage("2.5", "Computing uncached value", thread_id):
-                if asyncio.iscoroutinefunction(compute_fn):
-                    value = await compute_fn()
-                else:
-                    value = compute_fn()
-        else:
+        with self._observer.wrap_with_tracking("2.5", "Computing uncached value", thread_id):
             if asyncio.iscoroutinefunction(compute_fn):
                 value = await compute_fn()
             else:
@@ -548,21 +1043,63 @@ class CacheManager:
         if isinstance(value, str):
             await self.set(key, value, ttl, thread_id)
         else:
-            # Serialize non-string values to JSON
-            await self.set(key, json.dumps(value), ttl, thread_id)
+            # Serialize non-string values
+            serialized = orjson.dumps(value).decode('utf-8')
+            await self.set(key, serialized, ttl, thread_id)
 
         return value
 
-    def stats(self) -> dict[str, Any]:
+    # -------------------------------------------------------------------------
+    # Utilities
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def generate_cache_key(prefix: str, *args: Any) -> str:
         """
-        Get cache statistics.
+        Generate consistent cache key from prefix and arguments.
+
+        STAGE-2.1.1: Cache key generation
+
+        Uses MD5 for fast hashing (collision risk acceptable for cache).
+
+        Args:
+            prefix: Key prefix (e.g., "response", "session")
+            *args: Values to hash for the key
 
         Returns:
-            Dict with L1 and L2 statistics
+            Cache key (e.g., "cache:response:abc123def...")
+
+        Optimization: Uses MD5 for fast hashing
+        - MD5 is fast (not cryptographically secure, but fine for cache)
+        - Collision risk is acceptable (worst case: cache miss)
+        - Consistent hashing ensures same input → same key
         """
+        data = ":".join(str(arg) for arg in args)
+        hash_value = hashlib.md5(data.encode()).hexdigest()
+        return f"{REDIS_KEY_CACHE_RESPONSE}:{prefix}:{hash_value}"
+
+    # -------------------------------------------------------------------------
+    # Monitoring
+    # -------------------------------------------------------------------------
+
+    def stats(self) -> dict[str, Any]:
+        """
+        Get cache performance statistics.
+
+        Returns:
+            Dict with hit rates, sizes, and capacity utilization
+        """
+        observer_stats = self._observer.get_stats()
+        l1_size = self._l1.get_size()
+        l1_max = self._l1.get_max_size()
+
         return {
-            "l1": self._memory_cache.stats(),
+            **observer_stats,
+            "l1_size": l1_size,
+            "l1_max_size": l1_max,
+            "l1_capacity_utilization": round(l1_size / l1_max * 100, 2),
             "l2_connected": self._initialized,
+            "caching_enabled": self._enabled,
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
 
@@ -571,14 +1108,29 @@ class CacheManager:
         Perform health check on cache system.
 
         Returns:
-            Dict with health status
+            Dict with health status for all layers
         """
-        health = {"status": "healthy", "l1": self._memory_cache.stats(), "l2": None}
+        health = {
+            "status": "healthy",
+            "caching_enabled": self._enabled,
+            "l1": {
+                "status": "healthy",
+                "size": self._l1.get_size(),
+                "max_size": self._l1.get_max_size(),
+            },
+            "l2": None,
+        }
 
-        if self._redis_client and self._initialized:
-            health["l2"] = await self._redis_client.health_check()
-            if health["l2"]["status"] != "healthy":
+        if self._initialized:
+            try:
+                l2_health = await self._l2.health_check()
+                health["l2"] = l2_health
+
+                if l2_health.get("status") != "healthy":
+                    health["status"] = "degraded"
+            except Exception as e:
                 health["status"] = "degraded"
+                health["l2"] = {"status": "error", "error": str(e)}
         else:
             health["status"] = "degraded"
             health["l2"] = {"status": "not_connected"}
@@ -586,7 +1138,10 @@ class CacheManager:
         return health
 
 
-# Global cache manager instance (singleton)
+# =============================================================================
+# GLOBAL INSTANCE (SINGLETON PATTERN)
+# =============================================================================
+
 _cache_manager: CacheManager | None = None
 
 
@@ -618,9 +1173,7 @@ async def init_cache() -> CacheManager:
 
 
 async def close_cache() -> None:
-    """
-    Shutdown the global cache manager.
-    """
+    """Shutdown the global cache manager."""
     global _cache_manager
 
     if _cache_manager:

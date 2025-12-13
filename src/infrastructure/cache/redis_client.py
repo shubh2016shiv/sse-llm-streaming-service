@@ -1,28 +1,25 @@
-#!/usr/bin/env python3
 """
-Redis Client with Connection Pooling
+Redis Client with Connection Pooling - Refactored for Clarity
 
-This module provides an async Redis client with connection pooling for
-high-performance distributed caching and state management.
+Architecture:
+    RedisClient (Public API)
+        ├── ConnectionManager (Connection lifecycle)
+        ├── PipelineManager (Auto-batching for performance)
+        ├── OperationExecutor (Command execution with error handling)
+        └── HealthMonitor (Health checks and metrics)
 
-Architectural Decision: Connection pooling for performance
-- Reuse connections instead of creating new ones
-- Min 10 connections (always warm)
-- Max 100 connections (burst capacity)
-- Health checks every 30 seconds
-- Automatic reconnection with exponential backoff
+Performance Targets:
+    - Connection reuse: 50-100ms saved per request
+    - Pipeline batching: 50-70% reduction in round-trips
+    - Pool exhaustion handling: graceful backpressure
+    - Health checks: early failure detection
 
-Performance Impact:
-- Connection reuse: 50-100ms saved per request
-- Pool exhaustion handling: graceful backpressure
-- Health checks: early failure detection
-- Redis pipelining reduces round-trips by 50-70%
-
-Author: Senior Solution Architect
-Date: 2025-12-05
+Author: Refactored for clarity and maintainability
+Date: 2025-12-13
 """
 
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -38,144 +35,45 @@ from src.core.observability.execution_tracker import get_tracker
 logger = get_logger(__name__)
 
 
-class RedisPipelineManager:
+# =============================================================================
+# LAYER 1: CONNECTION MANAGEMENT
+# Handles connection lifecycle, pooling, and reconnection
+# =============================================================================
+
+
+class ConnectionManager:
     """
-    Auto-batching Redis pipeline for reducing round-trips.
+    Manages Redis connection lifecycle and pooling.
 
-    Queues Redis commands and executes them in batches via pipeline.
-    Reduces network round-trips by 50-70% for workloads with multiple concurrent operations.
+    Responsibility: Connection establishment, pooling, and cleanup.
 
-    Rationale: Instead of making 10 separate round-trips to Redis, bundle them into
-    1 trip. It's like making a shopping list instead of going to the store 10 times
-    for individual items.
+    Why Connection Pooling?
+    - Reuse connections instead of creating new ones (saves 50-100ms per request)
+    - Min connections: Always warm (no cold start)
+    - Max connections: Burst capacity (prevents overload)
+    - Health checks: Early failure detection
+    - Automatic reconnection: Resilience
 
-    Algorithm:
-    1. Queue command instead of executing immediately
-    2. If queue size >= BATCH_SIZE, flush immediately
-    3. Otherwise, schedule flush after BATCH_TIMEOUT
-    4. On flush: create pipeline, add all commands, execute once
-    5. Set results for all futures
-    6. Handle errors gracefully
-
-    Performance Impact: Reduces Redis round-trips by 50-70%, improves latency by 0.5-2ms
-    Trade-off: Slight complexity increase, but transparent to existing code
-    """
-
-    BATCH_SIZE = 10
-    BATCH_TIMEOUT = 0.01
-
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self._queue: list[tuple[str, tuple, dict, asyncio.Future]] = []
-        self._lock = asyncio.Lock()
-        self._flush_task: asyncio.Task | None = None
-
-    async def execute_command(self, command: str, *args, **kwargs) -> Any:
-        """
-        Queue a Redis command for batched execution.
-
-        Returns a Future that will be resolved when the command executes.
-        """
-        future: asyncio.Future = asyncio.Future()
-
-        async with self._lock:
-            self._queue.append((command, args, kwargs, future))
-
-            if len(self._queue) >= self.BATCH_SIZE:
-                await self._flush()
-            elif not self._flush_task:
-                self._flush_task = asyncio.create_task(self._scheduled_flush())
-
-        return await future
-
-    async def _scheduled_flush(self) -> None:
-        """Flush after timeout expires."""
-        await asyncio.sleep(self.BATCH_TIMEOUT)
-        async with self._lock:
-            await self._flush()
-            self._flush_task = None
-
-    async def _flush(self) -> None:
-        """Execute all queued commands in a single pipeline."""
-        if not self._queue:
-            return
-
-        commands = self._queue.copy()
-        self._queue.clear()
-
-        try:
-            pipe = self.redis.pipeline()
-
-            for command, args, kwargs, _ in commands:
-                getattr(pipe, command)(*args, **kwargs)
-
-            results = await pipe.execute()
-
-            for (_, _, _, future), result in zip(commands, results):
-                if not future.done():
-                    future.set_result(result)
-
-        except Exception as e:
-            for _, _, _, future in commands:
-                if not future.done():
-                    future.set_exception(e)
-
-
-class RedisClient:
-    """
-    Async Redis client with connection pooling and health checks.
-
-    STAGE-REDIS: Redis client initialization and operations
-
-    This class provides:
-    - Connection pooling for performance
-    - Automatic health checks
-    - Graceful error handling
-    - Integration with execution tracker
-    - Auto-batching pipeline for reduced round-trips
-
-    Usage:
-        client = RedisClient()
-        await client.connect()
-
-        # Basic operations
-        await client.set("key", "value", ttl=3600)
-        value = await client.get("key")
-
-        # With execution tracking
-        async with client.tracked_operation("CACHE.1", "Redis GET", thread_id):
-            value = await client.get("key")
-
-        await client.disconnect()
-
-    Architectural Benefits:
-    - Connection reuse (50-100ms saved per request)
-    - Health monitoring for early failure detection
-    - Graceful degradation under load
-    - Pipeline batching reduces round-trips by 50-70%
+    Pool Configuration:
+    - Max connections: 100 (configurable)
+    - Socket timeout: 5s
+    - Health check interval: 30s
+    - Retry on timeout: Enabled
     """
 
-    def __init__(self):
+    def __init__(self, settings):
         """
-        Initialize Redis client.
+        Initialize connection manager.
 
-        STAGE-REDIS.1: Client initialization
+        Args:
+            settings: Application settings
         """
-        self.settings = get_settings()
-        self.pool: ConnectionPool | None = None
-        self.client: redis.Redis | None = None
+        self._settings = settings
+        self._pool: ConnectionPool | None = None
+        self._client: redis.Redis | None = None
         self._is_connected = False
-        self._tracker = get_tracker()
-        self._pipeline_manager: RedisPipelineManager | None = None
 
-        logger.info(
-            "Redis client initialized",
-            stage="REDIS.1",
-            host=self.settings.redis.REDIS_HOST,
-            port=self.settings.redis.REDIS_PORT,
-        )
-
-    async def connect(self) -> None:
+    async def connect(self) -> redis.Redis:
         """
         Establish connection to Redis with connection pooling.
 
@@ -185,54 +83,60 @@ class RedisClient:
         - Max connections: 100 (configurable)
         - Socket timeout: 5s
         - Health check interval: 30s
+        - Decode responses: True (returns strings, not bytes)
+
+        Returns:
+            redis.Redis: Connected Redis client
 
         Raises:
             CacheConnectionError: If connection fails
         """
-        if self._is_connected:
-            return
+        if self._is_connected and self._client:
+            return self._client
 
         try:
             # STAGE-REDIS.2.1: Create connection pool
-            self.pool = ConnectionPool(
-                host=self.settings.redis.REDIS_HOST,
-                port=self.settings.redis.REDIS_PORT,
-                db=self.settings.redis.REDIS_DB,
-                password=self.settings.redis.REDIS_PASSWORD,
-                max_connections=self.settings.redis.REDIS_MAX_CONNECTIONS,
-                socket_connect_timeout=self.settings.redis.REDIS_SOCKET_CONNECT_TIMEOUT,
-                socket_timeout=self.settings.redis.REDIS_SOCKET_TIMEOUT,
-                retry_on_timeout=True,
-                health_check_interval=self.settings.redis.REDIS_HEALTH_CHECK_INTERVAL,
+            # Pool maintains a set of reusable connections
+            # This avoids the overhead of creating new connections for each request
+            self._pool = ConnectionPool(
+                host=self._settings.redis.REDIS_HOST,
+                port=self._settings.redis.REDIS_PORT,
+                db=self._settings.redis.REDIS_DB,
+                password=self._settings.redis.REDIS_PASSWORD,
+                max_connections=self._settings.redis.REDIS_MAX_CONNECTIONS,
+                socket_connect_timeout=self._settings.redis.REDIS_SOCKET_CONNECT_TIMEOUT,
+                socket_timeout=self._settings.redis.REDIS_SOCKET_TIMEOUT,
+                retry_on_timeout=True,  # Automatically retry on timeout
+                health_check_interval=self._settings.redis.REDIS_HEALTH_CHECK_INTERVAL,
                 decode_responses=True,  # Return strings instead of bytes
             )
 
             # STAGE-REDIS.2.2: Create Redis client with pool
-            self.client = redis.Redis(connection_pool=self.pool)
+            self._client = redis.Redis(connection_pool=self._pool)
 
             # STAGE-REDIS.2.3: Verify connection with ping
-            await self.client.ping()
-
-            # STAGE-REDIS.2.4: Initialize pipeline manager
-            self._pipeline_manager = RedisPipelineManager(self.client)
+            # This ensures the connection is actually working
+            await self._client.ping()
 
             self._is_connected = True
 
             logger.info(
                 "Redis connected successfully",
                 stage="REDIS.2",
-                host=self.settings.redis.REDIS_HOST,
-                port=self.settings.redis.REDIS_PORT,
-                max_connections=self.settings.redis.REDIS_MAX_CONNECTIONS,
+                host=self._settings.redis.REDIS_HOST,
+                port=self._settings.redis.REDIS_PORT,
+                max_connections=self._settings.redis.REDIS_MAX_CONNECTIONS,
             )
+
+            return self._client
 
         except (ConnectionError, TimeoutError) as e:
             logger.error("Failed to connect to Redis", stage="REDIS.2", error=str(e))
             raise CacheConnectionError(
                 message=f"Failed to connect to Redis: {e}",
                 details={
-                    "host": self.settings.redis.REDIS_HOST,
-                    "port": self.settings.redis.REDIS_PORT,
+                    "host": self._settings.redis.REDIS_HOST,
+                    "port": self._settings.redis.REDIS_PORT,
                 },
             )
 
@@ -241,12 +145,17 @@ class RedisClient:
         Close Redis connection and pool.
 
         STAGE-REDIS.3: Connection cleanup
-        """
-        if self.client:
-            await self.client.close()
 
-        if self.pool:
-            await self.pool.disconnect()
+        Cleanup Steps:
+        1. Close Redis client (releases resources)
+        2. Disconnect pool (closes all connections)
+        3. Mark as disconnected
+        """
+        if self._client:
+            await self._client.close()
+
+        if self._pool:
+            await self._pool.disconnect()
 
         self._is_connected = False
 
@@ -257,45 +166,206 @@ class RedisClient:
         Check Redis connection health.
 
         Returns:
-            bool: True if healthy, False otherwise
+            True if healthy, False otherwise
         """
         try:
-            if self.client and self._is_connected:
-                await self.client.ping()
+            if self._client and self._is_connected:
+                await self._client.ping()
                 return True
         except (ConnectionError, TimeoutError):
             pass
         return False
 
-    @asynccontextmanager
-    async def tracked_operation(self, stage_id: str, stage_name: str, thread_id: str):
+    def get_client(self) -> redis.Redis | None:
+        """Get the Redis client instance."""
+        return self._client
+
+    def get_pool(self) -> ConnectionPool | None:
+        """Get the connection pool instance."""
+        return self._pool
+
+    def is_connected(self) -> bool:
+        """Check if connected to Redis."""
+        return self._is_connected
+
+
+# =============================================================================
+# LAYER 2: PIPELINE MANAGEMENT
+# Auto-batching for reduced network round-trips
+# =============================================================================
+
+
+class PipelineManager:
+    """
+    Auto-batching Redis pipeline for reducing round-trips.
+
+    Responsibility: Queue commands and execute them in batches via pipeline.
+
+    Why Pipelining?
+    - Reduces network round-trips by 50-70%
+    - Bundles multiple commands into single network call
+    - Like making a shopping list instead of going to the store 10 times
+
+    Algorithm:
+    1. Queue command instead of executing immediately
+    2. If queue size >= BATCH_SIZE, flush immediately
+    3. Otherwise, schedule flush after BATCH_TIMEOUT
+    4. On flush: create pipeline, add all commands, execute once
+    5. Set results for all futures
+    6. Handle errors gracefully
+
+    Performance Impact:
+    - Reduces Redis round-trips by 50-70%
+    - Improves latency by 0.5-2ms
+    - Trade-off: Slight complexity increase, but transparent to existing code
+
+    Configuration:
+    - BATCH_SIZE: 10 commands (flush immediately when reached)
+    - BATCH_TIMEOUT: 10ms (flush after timeout if batch not full)
+    """
+
+    BATCH_SIZE = 10
+    BATCH_TIMEOUT = 0.01  # 10ms
+
+    def __init__(self, redis_client: redis.Redis):
         """
-        Context manager for tracked Redis operations.
+        Initialize pipeline manager.
 
         Args:
-            stage_id: Stage identifier for execution tracking
-            stage_name: Human-readable stage name
-            thread_id: Thread ID for correlation
-
-        Usage:
-            async with client.tracked_operation("2.2", "Redis GET", thread_id):
-                value = await client.get("key")
+            redis_client: Redis client instance
         """
-        with self._tracker.track_stage(stage_id, stage_name, thread_id):
-            yield
+        self._redis = redis_client
+        self._queue: list[tuple[str, tuple, dict, asyncio.Future]] = []
+        self._lock = asyncio.Lock()
+        self._flush_task: asyncio.Task | None = None
 
-    def get_pipeline_manager(self) -> RedisPipelineManager | None:
+    async def execute_command(self, command: str, *args, **kwargs) -> Any:
         """
-        Get the auto-batching pipeline manager.
+        Queue a Redis command for batched execution.
+
+        Batching Strategy:
+        - Commands are queued instead of executed immediately
+        - When batch is full (BATCH_SIZE), flush immediately
+        - Otherwise, flush after timeout (BATCH_TIMEOUT)
+        - This balances latency (timeout) vs throughput (batch size)
+
+        Args:
+            command: Redis command name (e.g., "get", "set")
+            *args: Command arguments
+            **kwargs: Command keyword arguments
 
         Returns:
-            RedisPipelineManager: Pipeline manager for batched operations, or None if not connected
+            Future that will be resolved when the command executes
         """
-        return self._pipeline_manager
+        future: asyncio.Future = asyncio.Future()
 
-    # =========================================================================
+        async with self._lock:
+            # Queue the command with its future
+            self._queue.append((command, args, kwargs, future))
+
+            # Flush immediately if batch is full
+            if len(self._queue) >= self.BATCH_SIZE:
+                await self._flush()
+            # Otherwise, schedule a flush after timeout
+            elif not self._flush_task:
+                self._flush_task = asyncio.create_task(self._scheduled_flush())
+
+        return await future
+
+    async def _scheduled_flush(self) -> None:
+        """
+        Flush after timeout expires.
+
+        This ensures commands don't wait indefinitely if batch never fills.
+        """
+        await asyncio.sleep(self.BATCH_TIMEOUT)
+        async with self._lock:
+            await self._flush()
+            self._flush_task = None
+
+    async def _flush(self) -> None:
+        """
+        Execute all queued commands in a single pipeline.
+
+        Pipeline Execution:
+        1. Copy and clear queue (allow new commands while executing)
+        2. Create pipeline
+        3. Add all commands to pipeline
+        4. Execute pipeline (single network round-trip)
+        5. Set results for all futures
+        6. Handle errors gracefully
+
+        Error Handling:
+        - If pipeline fails, all futures get the exception
+        - This ensures no command is left hanging
+        """
+        if not self._queue:
+            return
+
+        # Copy queue and clear it (allows new commands to queue while we execute)
+        commands = self._queue.copy()
+        self._queue.clear()
+
+        try:
+            # Create pipeline
+            pipe = self._redis.pipeline()
+
+            # Add all commands to pipeline
+            for command, args, kwargs, _ in commands:
+                getattr(pipe, command)(*args, **kwargs)
+
+            # Execute pipeline (single network round-trip for all commands)
+            results = await pipe.execute()
+
+            # Set results for all futures
+            for (_, _, _, future), result in zip(commands, results):
+                if not future.done():
+                    future.set_result(result)
+
+        except Exception as e:
+            # If pipeline fails, propagate error to all futures
+            for _, _, _, future in commands:
+                if not future.done():
+                    future.set_exception(e)
+
+
+# =============================================================================
+# LAYER 3: OPERATION EXECUTOR
+# Executes Redis commands with error handling and logging
+# =============================================================================
+
+
+class OperationExecutor:
+    """
+    Executes Redis operations with consistent error handling.
+
+    Responsibility: Command execution with error handling and logging.
+
+    Why Separate Executor?
+    - Centralizes error handling logic
+    - Consistent logging across all operations
+    - Easy to add retry logic or circuit breakers
+    - Single place to modify error behavior
+
+    Error Handling Strategy:
+    - Catch RedisError exceptions
+    - Log error with context (stage, key, etc.)
+    - Raise CacheKeyError with details
+    - Preserves stack trace for debugging
+    """
+
+    def __init__(self, redis_client: redis.Redis):
+        """
+        Initialize operation executor.
+
+        Args:
+            redis_client: Redis client instance
+        """
+        self._redis = redis_client
+
+    # -------------------------------------------------------------------------
     # Basic Operations
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
     async def get(self, key: str) -> str | None:
         """
@@ -307,10 +377,10 @@ class RedisClient:
             key: Redis key
 
         Returns:
-            Optional[str]: Value or None if not found
+            Value or None if not found
         """
         try:
-            return await self.client.get(key)
+            return await self._redis.get(key)
         except RedisError as e:
             logger.error("Redis GET failed", stage="REDIS.GET", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis GET failed: {e}", details={"key": key})
@@ -327,14 +397,14 @@ class RedisClient:
             key: Redis key
             value: Value to set
             ttl: Time-to-live in seconds (optional)
-            nx: Only set if key doesn't exist
-            xx: Only set if key exists
+            nx: Only set if key doesn't exist (SET NX)
+            xx: Only set if key exists (SET XX)
 
         Returns:
-            bool: True if set successfully
+            True if set successfully
         """
         try:
-            result = await self.client.set(key, value, ex=ttl, nx=nx, xx=xx)
+            result = await self._redis.set(key, value, ex=ttl, nx=nx, xx=xx)
             return result is not None
         except RedisError as e:
             logger.error("Redis SET failed", stage="REDIS.SET", key=key, error=str(e))
@@ -350,10 +420,10 @@ class RedisClient:
             *keys: Keys to delete
 
         Returns:
-            int: Number of keys deleted
+            Number of keys deleted
         """
         try:
-            return await self.client.delete(*keys)
+            return await self._redis.delete(*keys)
         except RedisError as e:
             logger.error("Redis DELETE failed", stage="REDIS.DEL", keys=keys, error=str(e))
             raise CacheKeyError(message=f"Redis DELETE failed: {e}", details={"keys": keys})
@@ -366,10 +436,10 @@ class RedisClient:
             *keys: Keys to check
 
         Returns:
-            int: Number of keys that exist
+            Number of keys that exist
         """
         try:
-            return await self.client.exists(*keys)
+            return await self._redis.exists(*keys)
         except RedisError as e:
             logger.error("Redis EXISTS failed", stage="REDIS.EXISTS", keys=keys, error=str(e))
             raise CacheKeyError(message=f"Redis EXISTS failed: {e}", details={"keys": keys})
@@ -383,10 +453,10 @@ class RedisClient:
             ttl: Time-to-live in seconds
 
         Returns:
-            bool: True if TTL was set
+            True if TTL was set
         """
         try:
-            return await self.client.expire(key, ttl)
+            return await self._redis.expire(key, ttl)
         except RedisError as e:
             logger.error("Redis EXPIRE failed", stage="REDIS.EXPIRE", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis EXPIRE failed: {e}", details={"key": key})
@@ -399,22 +469,33 @@ class RedisClient:
             key: Redis key
 
         Returns:
-            int: TTL in seconds, -1 if no TTL, -2 if key doesn't exist
+            TTL in seconds, -1 if no TTL, -2 if key doesn't exist
         """
         try:
-            return await self.client.ttl(key)
+            return await self._redis.ttl(key)
         except RedisError as e:
             logger.error("Redis TTL failed", stage="REDIS.TTL", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis TTL failed: {e}", details={"key": key})
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # Hash Operations (for structured data)
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
     async def hget(self, name: str, key: str) -> str | None:
-        """Get a hash field value."""
+        """
+        Get a hash field value.
+
+        Use Case: Store structured data (e.g., user profile, session data)
+
+        Args:
+            name: Hash name
+            key: Field name
+
+        Returns:
+            Field value or None if not found
+        """
         try:
-            return await self.client.hget(name, key)
+            return await self._redis.hget(name, key)
         except RedisError as e:
             logger.error(
                 "Redis HGET failed",
@@ -429,9 +510,19 @@ class RedisClient:
             )
 
     async def hset(self, name: str, key: str, value: str) -> int:
-        """Set a hash field value."""
+        """
+        Set a hash field value.
+
+        Args:
+            name: Hash name
+            key: Field name
+            value: Field value
+
+        Returns:
+            1 if new field, 0 if updated existing field
+        """
         try:
-            return await self.client.hset(name, key, value)
+            return await self._redis.hset(name, key, value)
         except RedisError as e:
             logger.error(
                 "Redis HSET failed",
@@ -446,9 +537,17 @@ class RedisClient:
             )
 
     async def hgetall(self, name: str) -> dict[str, str]:
-        """Get all hash fields."""
+        """
+        Get all hash fields.
+
+        Args:
+            name: Hash name
+
+        Returns:
+            Dict of all fields and values
+        """
         try:
-            return await self.client.hgetall(name)
+            return await self._redis.hgetall(name)
         except RedisError as e:
             logger.error(
                 "Redis HGETALL failed",
@@ -462,9 +561,18 @@ class RedisClient:
             )
 
     async def hdel(self, name: str, *keys: str) -> int:
-        """Delete hash fields."""
+        """
+        Delete hash fields.
+
+        Args:
+            name: Hash name
+            *keys: Field names to delete
+
+        Returns:
+            Number of fields deleted
+        """
         try:
-            return await self.client.hdel(name, *keys)
+            return await self._redis.hdel(name, *keys)
         except RedisError as e:
             logger.error(
                 "Redis HDEL failed",
@@ -478,95 +586,137 @@ class RedisClient:
                 details={"name": name, "keys": keys},
             )
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # Counter Operations (for rate limiting, metrics)
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
     async def incr(self, key: str) -> int:
-        """Increment a counter."""
+        """
+        Increment a counter.
+
+        Use Case: Rate limiting, request counting, metrics
+
+        Args:
+            key: Counter key
+
+        Returns:
+            New counter value
+        """
         try:
-            return await self.client.incr(key)
+            return await self._redis.incr(key)
         except RedisError as e:
             logger.error("Redis INCR failed", stage="REDIS.INCR", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis INCR failed: {e}", details={"key": key})
 
     async def incrby(self, key: str, amount: int) -> int:
-        """Increment a counter by amount."""
+        """
+        Increment a counter by amount.
+
+        Args:
+            key: Counter key
+            amount: Amount to increment
+
+        Returns:
+            New counter value
+        """
         try:
-            return await self.client.incrby(key, amount)
+            return await self._redis.incrby(key, amount)
         except RedisError as e:
             logger.error("Redis INCRBY failed", stage="REDIS.INCRBY", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis INCRBY failed: {e}", details={"key": key})
 
     async def decr(self, key: str) -> int:
-        """Decrement a counter."""
+        """
+        Decrement a counter.
+
+        Args:
+            key: Counter key
+
+        Returns:
+            New counter value
+        """
         try:
-            return await self.client.decr(key)
+            return await self._redis.decr(key)
         except RedisError as e:
             logger.error("Redis DECR failed", stage="REDIS.DECR", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis DECR failed: {e}", details={"key": key})
 
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # List Operations (for queues)
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
     async def lpush(self, key: str, *values: str) -> int:
-        """Push values to the left of a list."""
+        """
+        Push values to the left of a list.
+
+        Use Case: Queue implementation (producer side)
+
+        Args:
+            key: List key
+            *values: Values to push
+
+        Returns:
+            New list length
+        """
         try:
-            return await self.client.lpush(key, *values)
+            return await self._redis.lpush(key, *values)
         except RedisError as e:
             logger.error("Redis LPUSH failed", stage="REDIS.LPUSH", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis LPUSH failed: {e}", details={"key": key})
 
     async def rpop(self, key: str) -> str | None:
-        """Pop value from the right of a list."""
+        """
+        Pop value from the right of a list.
+
+        Use Case: Queue implementation (consumer side)
+
+        Args:
+            key: List key
+
+        Returns:
+            Popped value or None if list is empty
+        """
         try:
-            return await self.client.rpop(key)
+            return await self._redis.rpop(key)
         except RedisError as e:
             logger.error("Redis RPOP failed", stage="REDIS.RPOP", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis RPOP failed: {e}", details={"key": key})
 
     async def llen(self, key: str) -> int:
-        """Get list length."""
+        """
+        Get list length.
+
+        Args:
+            key: List key
+
+        Returns:
+            List length
+        """
         try:
-            return await self.client.llen(key)
+            return await self._redis.llen(key)
         except RedisError as e:
             logger.error("Redis LLEN failed", stage="REDIS.LLEN", key=key, error=str(e))
             raise CacheKeyError(message=f"Redis LLEN failed: {e}", details={"key": key})
 
-    # =========================================================================
-    # Pipeline Operations (for batch operations)
-    # =========================================================================
-
-    def pipeline(self):
-        """
-        Create a pipeline for batch operations.
-
-        Usage:
-            async with client.pipeline() as pipe:
-                pipe.set("key1", "value1")
-                pipe.set("key2", "value2")
-                results = await pipe.execute()
-        """
-        return self.client.pipeline()
-
-    # =========================================================================
+    # -------------------------------------------------------------------------
     # Pub/Sub Operations (for distributed messaging)
-    # =========================================================================
+    # -------------------------------------------------------------------------
 
     async def publish(self, channel: str, message: str) -> int:
         """
         Publish a message to a channel.
+
+        Use Case: Distributed messaging, event broadcasting
 
         Args:
             channel: Channel name
             message: Message payload
 
         Returns:
-            int: Number of subscribers that received the message
+            Number of subscribers that received the message
         """
         try:
-            return await self.client.publish(channel, message)
+            return await self._redis.publish(channel, message)
         except RedisError as e:
             logger.error(
                 "Redis PUBLISH failed",
@@ -583,14 +733,66 @@ class RedisClient:
         """
         Create a PubSub instance.
 
-        Returns:
-            PubSub: Redis PubSub object
-        """
-        return self.client.pubsub()
+        Use Case: Subscribe to channels for distributed messaging
 
-    # =========================================================================
-    # Health Check
-    # =========================================================================
+        Returns:
+            PubSub object for subscribing to channels
+        """
+        return self._redis.pubsub()
+
+    def pipeline(self):
+        """
+        Create a pipeline for batch operations.
+
+        Use Case: Execute multiple commands in a single round-trip
+
+        Usage:
+            async with executor.pipeline() as pipe:
+                pipe.set("key1", "value1")
+                pipe.set("key2", "value2")
+                results = await pipe.execute()
+
+        Returns:
+            Pipeline object
+        """
+        return self._redis.pipeline()
+
+
+# =============================================================================
+# LAYER 4: HEALTH MONITORING
+# Health checks and connection pool metrics
+# =============================================================================
+
+
+class HealthMonitor:
+    """
+    Monitors Redis health and connection pool metrics.
+
+    Responsibility: Health checks, pool monitoring, and alerting.
+
+    Why Separate Monitor?
+    - Centralizes health check logic
+    - Easy to add custom health checks
+    - Pool metrics for capacity planning
+    - Early warning for pool exhaustion
+
+    Metrics Tracked:
+    - Connection status
+    - Ping latency
+    - Pool size and utilization
+    - Pool exhaustion warnings (>80% utilized)
+    """
+
+    def __init__(self, connection_manager: ConnectionManager, settings):
+        """
+        Initialize health monitor.
+
+        Args:
+            connection_manager: Connection manager instance
+            settings: Application settings
+        """
+        self._conn_mgr = connection_manager
+        self._settings = settings
 
     async def health_check(self) -> dict[str, Any]:
         """
@@ -602,16 +804,16 @@ class RedisClient:
         - Current pool connections
         - Max pool size
         - Connection utilization percentage
-        - Pool exhaustion warning if > 80% utilized
+        - Pool exhaustion warning if >80% utilized
 
         Returns:
             Dict with health status and metrics
         """
         health = {
             "status": "healthy",
-            "connected": self._is_connected,
-            "host": self.settings.redis.REDIS_HOST,
-            "port": self.settings.redis.REDIS_PORT,
+            "connected": self._conn_mgr.is_connected(),
+            "host": self._settings.redis.REDIS_HOST,
+            "port": self._settings.redis.REDIS_PORT,
             "pool_size": 0,
             "pool_available": 0,
             "pool_utilization_pct": 0,
@@ -620,30 +822,42 @@ class RedisClient:
         }
 
         try:
-            import time
+            client = self._conn_mgr.get_client()
+            if not client:
+                health["status"] = "unhealthy"
+                health["error"] = "Client not initialized"
+                return health
 
+            # Measure ping latency
             start = time.perf_counter()
-            await self.client.ping()
+            await client.ping()
             latency = (time.perf_counter() - start) * 1000
 
             health["ping_latency_ms"] = round(latency, 2)
 
-            if self.pool:
-                health["pool_size"] = self.pool.max_connections
-                if hasattr(self.pool, "_available_connections"):
-                    available = len(self.pool._available_connections)
+            # Get pool metrics
+            pool = self._conn_mgr.get_pool()
+            if pool:
+                health["pool_size"] = pool.max_connections
+
+                # Check available connections
+                if hasattr(pool, "_available_connections"):
+                    available = len(pool._available_connections)
                     health["pool_available"] = available
+
+                    # Calculate utilization
                     utilization = 100.0 * (
-                        (self.pool.max_connections - available) / self.pool.max_connections
+                        (pool.max_connections - available) / pool.max_connections
                     )
                     health["pool_utilization_pct"] = round(utilization, 1)
 
+                    # Warn if pool is >80% utilized
                     if utilization > 80:
                         health["pool_warning"] = True
                         logger.warning(
                             "Redis pool utilization high",
                             pool_utilization=utilization,
-                            max_connections=self.pool.max_connections,
+                            max_connections=pool.max_connections,
                         )
 
         except Exception as e:
@@ -653,7 +867,231 @@ class RedisClient:
         return health
 
 
-# Global Redis client instance (singleton)
+# =============================================================================
+# LAYER 5: PUBLIC API
+# Clean interface that coordinates all layers
+# =============================================================================
+
+
+class RedisClient:
+    """
+    Async Redis client with connection pooling and health checks.
+
+    Public API for all Redis operations.
+
+    Features:
+        - Connection pooling for performance
+        - Automatic health checks
+        - Graceful error handling
+        - Integration with execution tracker
+        - Auto-batching pipeline for reduced round-trips
+
+    Usage:
+        client = RedisClient()
+        await client.connect()
+
+        # Basic operations
+        await client.set("key", "value", ttl=3600)
+        value = await client.get("key")
+
+        # With execution tracking
+        async with client.tracked_operation("CACHE.1", "Redis GET", thread_id):
+            value = await client.get("key")
+
+        await client.disconnect()
+
+    Architecture:
+        RedisClient (this class)
+            ├── ConnectionManager (connection lifecycle)
+            ├── PipelineManager (auto-batching)
+            ├── OperationExecutor (command execution)
+            └── HealthMonitor (health checks)
+
+    Architectural Benefits:
+    - Connection reuse (50-100ms saved per request)
+    - Health monitoring for early failure detection
+    - Graceful degradation under load
+    - Pipeline batching reduces round-trips by 50-70%
+    """
+
+    def __init__(self):
+        """
+        Initialize Redis client.
+
+        STAGE-REDIS.1: Client initialization
+        """
+        self._settings = get_settings()
+        self._tracker = get_tracker()
+
+        # Build layers
+        self._conn_mgr = ConnectionManager(self._settings)
+        self._pipeline_mgr: PipelineManager | None = None
+        self._executor: OperationExecutor | None = None
+        self._health_monitor = HealthMonitor(self._conn_mgr, self._settings)
+
+        logger.info(
+            "Redis client initialized",
+            stage="REDIS.1",
+            host=self._settings.redis.REDIS_HOST,
+            port=self._settings.redis.REDIS_PORT,
+        )
+
+    async def connect(self) -> None:
+        """
+        Establish connection to Redis with connection pooling.
+
+        STAGE-REDIS.2: Connection establishment
+
+        Raises:
+            CacheConnectionError: If connection fails
+        """
+        client = await self._conn_mgr.connect()
+
+        # STAGE-REDIS.2.4: Initialize pipeline manager and executor
+        self._pipeline_mgr = PipelineManager(client)
+        self._executor = OperationExecutor(client)
+
+    async def disconnect(self) -> None:
+        """
+        Close Redis connection and pool.
+
+        STAGE-REDIS.3: Connection cleanup
+        """
+        await self._conn_mgr.disconnect()
+        self._pipeline_mgr = None
+        self._executor = None
+
+    async def ping(self) -> bool:
+        """
+        Check Redis connection health.
+
+        Returns:
+            True if healthy, False otherwise
+        """
+        return await self._conn_mgr.ping()
+
+    @asynccontextmanager
+    async def tracked_operation(self, stage_id: str, stage_name: str, thread_id: str):
+        """
+        Context manager for tracked Redis operations.
+
+        Integrates with execution tracker for distributed tracing.
+
+        Args:
+            stage_id: Stage identifier for execution tracking
+            stage_name: Human-readable stage name
+            thread_id: Thread ID for correlation
+
+        Usage:
+            async with client.tracked_operation("2.2", "Redis GET", thread_id):
+                value = await client.get("key")
+        """
+        with self._tracker.track_stage(stage_id, stage_name, thread_id):
+            yield
+
+    def get_pipeline_manager(self) -> PipelineManager | None:
+        """
+        Get the auto-batching pipeline manager.
+
+        Use Case: Batch operations for reduced network overhead
+
+        Returns:
+            PipelineManager or None if not connected
+        """
+        return self._pipeline_mgr
+
+    # -------------------------------------------------------------------------
+    # Delegate to OperationExecutor
+    # All operations are delegated to the executor for consistent error handling
+    # -------------------------------------------------------------------------
+
+    async def get(self, key: str) -> str | None:
+        """Get value from Redis."""
+        return await self._executor.get(key)
+
+    async def set(
+        self, key: str, value: str, ttl: int | None = None, nx: bool = False, xx: bool = False
+    ) -> bool:
+        """Set value in Redis."""
+        return await self._executor.set(key, value, ttl, nx, xx)
+
+    async def delete(self, *keys: str) -> int:
+        """Delete keys from Redis."""
+        return await self._executor.delete(*keys)
+
+    async def exists(self, *keys: str) -> int:
+        """Check if keys exist in Redis."""
+        return await self._executor.exists(*keys)
+
+    async def expire(self, key: str, ttl: int) -> bool:
+        """Set TTL on a key."""
+        return await self._executor.expire(key, ttl)
+
+    async def ttl(self, key: str) -> int:
+        """Get TTL of a key."""
+        return await self._executor.ttl(key)
+
+    async def hget(self, name: str, key: str) -> str | None:
+        """Get a hash field value."""
+        return await self._executor.hget(name, key)
+
+    async def hset(self, name: str, key: str, value: str) -> int:
+        """Set a hash field value."""
+        return await self._executor.hset(name, key, value)
+
+    async def hgetall(self, name: str) -> dict[str, str]:
+        """Get all hash fields."""
+        return await self._executor.hgetall(name)
+
+    async def hdel(self, name: str, *keys: str) -> int:
+        """Delete hash fields."""
+        return await self._executor.hdel(name, *keys)
+
+    async def incr(self, key: str) -> int:
+        """Increment a counter."""
+        return await self._executor.incr(key)
+
+    async def incrby(self, key: str, amount: int) -> int:
+        """Increment a counter by amount."""
+        return await self._executor.incrby(key, amount)
+
+    async def decr(self, key: str) -> int:
+        """Decrement a counter."""
+        return await self._executor.decr(key)
+
+    async def lpush(self, key: str, *values: str) -> int:
+        """Push values to the left of a list."""
+        return await self._executor.lpush(key, *values)
+
+    async def rpop(self, key: str) -> str | None:
+        """Pop value from the right of a list."""
+        return await self._executor.rpop(key)
+
+    async def llen(self, key: str) -> int:
+        """Get list length."""
+        return await self._executor.llen(key)
+
+    async def publish(self, channel: str, message: str) -> int:
+        """Publish a message to a channel."""
+        return await self._executor.publish(channel, message)
+
+    def pubsub(self) -> redis.client.PubSub:
+        """Create a PubSub instance."""
+        return self._executor.pubsub()
+
+    def pipeline(self):
+        """Create a pipeline for batch operations."""
+        return self._executor.pipeline()
+
+    async def health_check(self) -> dict[str, Any]:
+        """Perform health check on Redis connection."""
+        return await self._health_monitor.health_check()
+
+
+# =============================================================================
+# GLOBAL INSTANCE (SINGLETON PATTERN)
+# =============================================================================
+
 _redis_client: RedisClient | None = None
 
 
@@ -685,9 +1123,7 @@ async def init_redis() -> RedisClient:
 
 
 async def close_redis() -> None:
-    """
-    Close the global Redis client.
-    """
+    """Close the global Redis client."""
     global _redis_client
 
     if _redis_client:
@@ -703,7 +1139,7 @@ if __name__ == "__main__":
     async def test_redis():
         setup_logging(log_level="DEBUG", log_format="console")
 
-        print("\\n=== Testing Redis Client ===\\n")
+        print("\n=== Testing Redis Client ===\n")
 
         client = await init_redis()
 
@@ -735,6 +1171,6 @@ if __name__ == "__main__":
 
         await close_redis()
 
-        print("\\n=== Redis Test Complete ===\\n")
+        print("\n=== Redis Test Complete ===\n")
 
     asyncio.run(test_redis())
