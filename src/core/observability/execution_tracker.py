@@ -142,6 +142,17 @@ class ExecutionTracker:
         Initialize execution tracker.
 
         ET.1_TRACKER_INITIALIZATION: Initialize execution tracker
+
+        CENTRALIZED CONFIGURATION:
+        --------------------------
+        This class CONSUMES configuration from get_settings().execution_tracking.
+        It does NOT define defaults - all defaults are in Settings class.
+        This ensures consistency across the application.
+
+        The sample rate controls what % of requests are tracked:
+        - 1.0 (100%): Track all requests - used in dev/test
+        - 0.1 (10%): Track 10% of requests - reduces memory in production
+        - 0.01 (1%): Track 1% of requests - minimal overhead at scale
         """
         # Storage for execution data by thread ID
         self._executions: dict[str, list[StageExecution]] = {}
@@ -149,10 +160,10 @@ class ExecutionTracker:
         # Current stage stack (for nested tracking)
         self._stage_stack: dict[str, list[StageExecution]] = {}
 
-        # Sampling configuration
+        # Get configuration from centralized settings (SINGLE SOURCE OF TRUTH)
         settings = get_settings()
-        self._tracking_enabled = True
-        self._sample_rate = float(settings.EXECUTION_TRACKING_SAMPLE_RATE)
+        self._tracking_enabled = settings.execution_tracking.EXECUTION_TRACKING_ENABLED
+        self._sample_rate = float(settings.execution_tracking.EXECUTION_TRACKING_SAMPLE_RATE)
 
         logger.info(
             "Execution tracker initialized",
