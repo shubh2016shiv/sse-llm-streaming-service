@@ -58,6 +58,14 @@ from src.core.exceptions.connection_pool import (
     UserConnectionLimitError,
 )
 
+# Monitoring exceptions (Prometheus, etc.)
+from src.core.exceptions.monitoring import (
+    PrometheusConnectionError,
+    PrometheusError,
+    PrometheusExtractionError,
+    PrometheusQueryError,
+)
+
 # Provider exceptions
 from src.core.exceptions.provider import (
     AllProvidersDownError,
@@ -129,4 +137,9 @@ __all__ = [
     # Execution Tracker
     "ExecutionTrackerError",
     "StageNotFoundError",
+    # Monitoring (Prometheus)
+    "PrometheusError",
+    "PrometheusConnectionError",
+    "PrometheusQueryError",
+    "PrometheusExtractionError",
 ]

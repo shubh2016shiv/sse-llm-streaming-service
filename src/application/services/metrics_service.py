@@ -604,11 +604,9 @@ class MetricsService:
         """
         logger.info("computing_all_prometheus_metrics")
 
-        # Check if Prometheus is available
-        prometheus_available = (
-            self.client._is_available
-            and self.client._consecutive_failures < self.client._max_consecutive_failures
-        )
+        # Check if Prometheus is available using the public interface
+        # The is_available() method encapsulates circuit breaker state logic
+        prometheus_available = self.client.is_available()
 
         # Get all metrics (each method handles its own errors)
         latency = await self.get_latency_metrics()
