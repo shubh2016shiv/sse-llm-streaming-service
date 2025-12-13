@@ -165,15 +165,18 @@ class ExecutionTrackingSettings(BaseSettings):
     STAGE-ET: Execution tracking configuration
 
     Architectural Decision: Probabilistic sampling for reduced memory usage
-    - 10% default sample rate (configurable)
+    - 100% default sample rate for development/testing (configurable)
     - Maintains full tracking for sampled requests
     - Hash-based sampling ensures consistent tracking per thread_id
+
+    NOTE: These values are NOT used directly. They are inherited from the main
+    Settings class for centralization. This class exists for logical grouping only.
     """
 
     EXECUTION_TRACKING_ENABLED: bool = Field(default=True, description="Enable execution tracking")
     EXECUTION_TRACKING_SAMPLE_RATE: float = Field(
-        default=0.1,
-        description="Sampling rate (0.0-1.0), 0.1 = 10%",
+        default=1.0,
+        description="Sampling rate (0.0-1.0), 1.0 = 100% (use lower in prod if needed)",
     )
 
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=True)
@@ -321,11 +324,21 @@ class Settings(BaseSettings):
     CACHE_SESSION_TTL: int = Field(default=86400, description="Session cache TTL (24 hours)")
     CACHE_L1_MAX_SIZE: int = Field(default=1000, description="L1 in-memory cache max entries")
 
-    # Execution Tracking settings
+    # =========================================================================
+    # EXECUTION TRACKING SETTINGS (CENTRALIZED)
+    # =========================================================================
+    # These are the SINGLE SOURCE OF TRUTH for execution tracking configuration.
+    # They are passed to ExecutionTrackingSettings via the execution_tracking property.
+    # DO NOT define these values elsewhere - always consume via get_settings().
+    #
+    # Why 100% sampling by default?
+    # - Development/Testing: Need all requests tracked to see metrics
+    # - Production: Can override via environment variable (e.g., 0.1 for 10%)
+    # - Reduces memory at scale while maintaining statistical accuracy
     EXECUTION_TRACKING_ENABLED: bool = Field(default=True, description="Enable execution tracking")
     EXECUTION_TRACKING_SAMPLE_RATE: float = Field(
-        default=0.1,
-        description="Sampling rate (0.0-1.0), 0.1 = 10%",
+        default=1.0,
+        description="Sampling rate (0.0-1.0), 1.0 = 100% (use lower in prod if needed)",
     )
 
     # Rate Limiting Local Cache settings
@@ -421,6 +434,23 @@ class Settings(BaseSettings):
     QUEUE_FAILOVER_MAX_DELAY_MS: int = Field(
         default=5000,
         description="Maximum delay for exponential backoff in milliseconds"
+    )
+
+    # =========================================================================
+    # QUEUE FAILOVER CHUNK BATCHING OPTIMIZATION
+    # =========================================================================
+    # Batch chunks before publishing to Redis Pub/Sub to reduce overhead.
+    # Instead of publishing each chunk individually (2-5ms per chunk),
+    # we batch 5 chunks and publish once (2-5ms per 5 chunks).
+    # This reduces Redis Pub/Sub operations by 80% and improves P99 latency.
+
+    QUEUE_FAILOVER_CHUNK_BATCH_SIZE: int = Field(
+        default=5,
+        description="Number of chunks to batch before publishing to Redis Pub/Sub (1 = disabled)"
+    )
+    QUEUE_FAILOVER_CHUNK_BATCH_TIMEOUT_MS: int = Field(
+        default=100,
+        description="Maximum time to wait for batch to fill before flushing (milliseconds)"
     )
 
     # Kafka-specific settings
@@ -533,7 +563,21 @@ class Settings(BaseSettings):
 
     @property
     def execution_tracking(self) -> "ExecutionTrackingSettings":
-        """Get execution tracking settings."""
+        """
+        Get execution tracking settings.
+
+        CENTRALIZED CONFIGURATION PATTERN:
+        -----------------------------------
+        This property creates an ExecutionTrackingSettings instance using values
+        from THIS class (Settings). This ensures a single source of truth:
+
+        ✓ Define once: EXECUTION_TRACKING_SAMPLE_RATE is defined only in Settings
+        ✓ Consume everywhere: All code uses get_settings().execution_tracking
+        ✓ Override easily: Set env var EXECUTION_TRACKING_SAMPLE_RATE=0.1
+
+        Returns:
+            ExecutionTrackingSettings with centralized values
+        """
         return ExecutionTrackingSettings(
             EXECUTION_TRACKING_ENABLED=self.EXECUTION_TRACKING_ENABLED,
             EXECUTION_TRACKING_SAMPLE_RATE=self.EXECUTION_TRACKING_SAMPLE_RATE,
