@@ -106,7 +106,7 @@ class StreamManager:
         try:
             # MKSTREAM option creates the stream if it doesn't exist
             # id="0" means start reading from the beginning
-            await self._redis.client.xgroup_create(
+            await self._redis.xgroup_create(
                 self._stream_name,
                 self._group_name,
                 id="0",
@@ -135,7 +135,7 @@ class StreamManager:
         Returns:
             Current number of messages in stream
         """
-        return await self._redis.client.xlen(self._stream_name)
+        return await self._redis.xlen(self._stream_name)
 
     async def add_message(
         self, message_data: dict[str, str], max_len: int
@@ -155,7 +155,7 @@ class StreamManager:
         Returns:
             Message ID (e.g., "1234567890123-0")
         """
-        message_id = await self._redis.client.xadd(
+        message_id = await self._redis.xadd(
             self._stream_name, message_data, maxlen=max_len, approximate=True
         )
         logger.debug("Message produced", stage="QUEUE.PROD", id=message_id)
@@ -183,7 +183,7 @@ class StreamManager:
         """
         streams = {self._stream_name: ">"}
 
-        response = await self._redis.client.xreadgroup(
+        response = await self._redis.xreadgroup(
             self._group_name, consumer_name, streams, count=batch_size, block=block_ms
         )
 
@@ -210,7 +210,7 @@ class StreamManager:
         Args:
             message_id: The ID of the message to acknowledge
         """
-        await self._redis.client.xack(self._stream_name, self._group_name, message_id)
+        await self._redis.xack(self._stream_name, self._group_name, message_id)
 
     def get_stream_name(self) -> str:
         """Get stream name."""

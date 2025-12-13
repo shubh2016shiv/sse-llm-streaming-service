@@ -1083,6 +1083,56 @@ class RedisClient:
         """Create a pipeline for batch operations."""
         return self._executor.pipeline()
 
+    # ============================================================================
+    # STREAM OPERATIONS
+    # ============================================================================
+
+    async def xgroup_create(
+        self, name: str, groupname: str, id: str = "$", mkstream: bool = False
+    ) -> bool:
+        """Create a consumer group for a stream."""
+        client = self._conn_mgr.get_client()
+        if not client:
+            raise RuntimeError("Redis client not connected")
+        return await client.xgroup_create(name, groupname, id=id, mkstream=mkstream)
+
+    async def xlen(self, name: str) -> int:
+        """Get the length of a stream."""
+        client = self._conn_mgr.get_client()
+        if not client:
+            raise RuntimeError("Redis client not connected")
+        return await client.xlen(name)
+
+    async def xadd(
+        self, name: str, fields: dict[str, str], maxlen: int | None = None, approximate: bool = True
+    ) -> str:
+        """Add a message to a stream."""
+        client = self._conn_mgr.get_client()
+        if not client:
+            raise RuntimeError("Redis client not connected")
+        return await client.xadd(name, fields, maxlen=maxlen, approximate=approximate)
+
+    async def xreadgroup(
+        self,
+        groupname: str,
+        consumername: str,
+        streams: dict[str, str],
+        count: int | None = None,
+        block: int | None = None,
+    ) -> list:
+        """Read messages from a stream consumer group."""
+        client = self._conn_mgr.get_client()
+        if not client:
+            raise RuntimeError("Redis client not connected")
+        return await client.xreadgroup(groupname, consumername, streams, count=count, block=block)
+
+    async def xack(self, name: str, groupname: str, *ids: str) -> int:
+        """Acknowledge processing of messages from a stream."""
+        client = self._conn_mgr.get_client()
+        if not client:
+            raise RuntimeError("Redis client not connected")
+        return await client.xack(name, groupname, *ids)
+
     async def health_check(self) -> dict[str, Any]:
         """Perform health check on Redis connection."""
         return await self._health_monitor.health_check()
