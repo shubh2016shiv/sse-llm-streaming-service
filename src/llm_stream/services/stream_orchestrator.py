@@ -224,6 +224,118 @@ class StreamOrchestrator:
         logger.info("StreamOrchestrator initialized with priority-based processing")
 
     # ========================================================================
+    # HELPER METHODS
+    # ========================================================================
+
+    def _record_prometheus_metrics(self, thread_id: str, provider: str, model: str) -> None:
+        """
+        Record Prometheus metrics from execution tracker data.
+
+        This method bridges the gap between the execution tracker (which tracks
+        stage durations for individual requests) and Prometheus (which aggregates
+        metrics across all requests).
+
+        Args:
+            thread_id: Thread ID to get execution summary for
+            provider: Provider used for this request
+            model: Model used for this request
+
+        Why This Is Needed:
+        -------------------
+        The execution tracker records detailed timing for each request stage,
+        but this data sits in memory and isn't exposed to Prometheus. This method:
+        1. Retrieves the execution summary from the tracker
+        2. Extracts stage durations
+        3. Records them in Prometheus histograms
+        4. Allows Prometheus to calculate percentiles (P50, P90, P99)
+
+        Without this, Prometheus queries return empty results because no data
+        has been recorded in the metrics.
+        """
+        from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+
+        # Get metrics collector singleton
+        metrics = get_metrics_collector()
+
+        # Get execution summary from tracker
+        summary = self._tracker.get_execution_summary(thread_id)
+
+        if not summary:
+            logger.warning("No execution summary available", thread_id=thread_id)
+            return
+
+        # Debug: Log summary structure to understand what we're getting
+        logger.debug(
+            "Execution summary retrieved",
+            thread_id=thread_id,
+            has_stages="stages" in summary,
+            stage_count=len(summary.get("stages", [])),
+            total_duration_ms=summary.get("total_duration_ms", 0),
+        )
+
+        if 'stages' not in summary or not summary.get('stages'):
+            logger.warning(
+                "Execution summary has no stages",
+                thread_id=thread_id,
+                summary_keys=list(summary.keys()),
+            )
+            # Still record request even if no stage data
+            status = "success" if summary.get('success', True) else "failure"
+            metrics.record_request(status=status, provider=provider, model=model)
+            return
+
+        # Record overall request success/failure
+        status = "success" if summary.get('success', True) else "failure"
+        metrics.record_request(status=status, provider=provider, model=model)
+
+        # Record overall request duration
+        total_duration_ms = summary.get('total_duration_ms', 0)
+        if total_duration_ms > 0:
+            duration_sec = total_duration_ms / 1000.0
+            metrics.record_request_duration(stage="overall", duration_seconds=duration_sec)
+
+        # Record stage durations in Prometheus
+        for stage_data in summary.get('stages', []):
+            stage_id = stage_data.get('stage_id', '')
+            stage_name = stage_data.get('stage_name', '')
+            duration_ms = stage_data.get('duration_ms')
+
+            # Skip if no duration recorded
+            if duration_ms is None or duration_ms <= 0:
+                continue
+
+            # Convert milliseconds to seconds (Prometheus standard)
+            duration_seconds = duration_ms / 1000.0
+
+            # Record in Prometheus histogram
+            # This allows Prometheus to calculate percentiles
+            metrics.record_stage_duration(
+                stage=stage_id,
+                substage=stage_name,
+                duration_seconds=duration_seconds
+            )
+
+            # Also record substages if present
+            for substage_data in stage_data.get('substages', []):
+                substage_id = substage_data.get('stage_id', '')
+                substage_name = substage_data.get('stage_name', '')
+                substage_duration_ms = substage_data.get('duration_ms')
+
+                if substage_duration_ms and substage_duration_ms > 0:
+                    metrics.record_stage_duration(
+                        stage=substage_id,
+                        substage=substage_name,
+                        duration_seconds=substage_duration_ms / 1000.0
+                    )
+
+        logger.debug(
+            "Recorded Prometheus metrics",
+            thread_id=thread_id,
+            total_duration_ms=total_duration_ms,
+            stage_count=summary.get('stage_count', 0)
+        )
+
+    # ========================================================================
     # MAIN STREAMING METHOD - THE HEART OF THE ORCHESTRATOR
     # ========================================================================
 
@@ -308,6 +420,10 @@ class StreamOrchestrator:
         # 2. Capacity monitoring (how loaded is the system?)
         # 3. Metrics/dashboards (current load)
         self._active_connections += 1
+
+        # Record connection increment in Prometheus
+        from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+        get_metrics_collector().increment_connections()
 
         try:
             # ================================================================
@@ -409,6 +525,19 @@ class StreamOrchestrator:
                 yield SSEEvent(
                     event=SSE_EVENT_COMPLETE, data={"thread_id": thread_id, "cached": True}
                 )
+
+                # Record metrics for cache hit path
+                from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+                metrics = get_metrics_collector()
+                summary = self._tracker.get_execution_summary(thread_id)
+                if summary:
+                    metrics.record_request(status="success", provider="cache", model=request.model)
+                    total_duration_ms = summary.get('total_duration_ms', 0)
+                    if total_duration_ms > 0:
+                        duration_sec = total_duration_ms / 1000.0
+                        metrics.record_request_duration(
+                            stage="cache_hit", duration_seconds=duration_sec
+                        )
 
                 # EARLY RETURN: Skip stages 3-6 entirely
                 # We're done! No need to call the LLM.
@@ -546,11 +675,21 @@ class StreamOrchestrator:
                     # 3. Processes chunk
                     # 4. Yields chunk to client
                     # 5. Repeats until LLM signals completion
+
+                    # Record provider request start
+                    from src.infrastructure.monitoring.metrics_collector import (
+                        get_metrics_collector,
+                    )
+                    metrics = get_metrics_collector()
+
                     async for chunk in provider.stream(
                         query=request.query, model=request.model, thread_id=thread_id
                     ):
                         # STEP 5.2.1: Track chunk
                         chunk_count += 1
+
+                        # Record chunk in Prometheus
+                        metrics.record_chunks_streamed(provider=provider.name, count=1)
 
                         # STEP 5.2.2: Collect chunk for caching
                         # We need the full response to cache it later
@@ -576,6 +715,9 @@ class StreamOrchestrator:
                         # - "content_filter": Content policy violation
                         if chunk.finish_reason:
                             break
+
+                    # Record provider request success
+                    metrics.record_provider_request(provider=provider.name, status="success")
 
                 finally:
                     # STEP 5.3: Stop heartbeat task
@@ -657,7 +799,12 @@ class StreamOrchestrator:
                 },
             )
 
-            # STEP 6.5: Log completion
+            # STEP 6.5: Record Prometheus metrics
+            # Send stage durations to Prometheus for aggregation
+            provider_name = provider.name if provider else "unknown"
+            self._record_prometheus_metrics(thread_id, provider_name, request.model)
+
+            # STEP 6.6: Log completion
             # This helps with monitoring and debugging
             logger.info(
                 "Stream completed successfully",
@@ -690,6 +837,13 @@ class StreamOrchestrator:
 
             logger.error(f"Stream failed: {e}", thread_id=thread_id)
 
+            # Record error in Prometheus
+            from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+            metrics = get_metrics_collector()
+            metrics.record_error(error_type=type(e).__name__, stage="stream")
+            provider_name = request.provider or "unknown"
+            metrics.record_request(status="failure", provider=provider_name, model=request.model)
+
             # Send error event to client
             # Client can display error message to user
             yield SSEEvent(
@@ -712,6 +866,13 @@ class StreamOrchestrator:
             # - Don't crash the application
 
             logger.error(f"Unexpected error: {e}", thread_id=thread_id)
+
+            # Record error in Prometheus
+            from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+            metrics = get_metrics_collector()
+            metrics.record_error(error_type="internal_error", stage="stream")
+            provider_name = request.provider or "unknown"
+            metrics.record_request(status="failure", provider=provider_name, model=request.model)
 
             # Send generic error to client
             # We don't expose internal error details for security
@@ -746,6 +907,10 @@ class StreamOrchestrator:
             # - Connection leaks (counter keeps growing)
             # - False connection limit errors (think we're at capacity when we're not)
             self._active_connections -= 1
+
+            # Record connection decrement in Prometheus
+            from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
+            get_metrics_collector().decrement_connections()
 
             # CLEANUP 2: Clear execution tracker data
             # This frees memory used for tracking this request
