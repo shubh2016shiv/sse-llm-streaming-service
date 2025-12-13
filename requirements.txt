@@ -15,6 +15,7 @@ aiokafka==0.10.0       # Async Kafka client
 pybreaker==1.0.2       # Circuit breaker with Redis backend
 slowapi==0.1.9         # Rate limiting for FastAPI
 tenacity==8.3.0        # Retry logic with exponential backoff
+aioresilience==0.2.1   # Async resilience patterns (circuit breaker, retry, etc.)
 
 # Logging & Monitoring
 structlog==24.1.0      # Structured logging
@@ -28,6 +29,7 @@ httpx==0.27.0          # Async HTTP client
 # Utilities
 python-dotenv==1.0.0   # Environment variables
 tinydb==4.8.0          # Lightweight database (existing)
+orjson>=3.10.0         # Fast JSON serialization (2-4x faster than stdlib)
 
 # Testing
 pytest==8.2.0
