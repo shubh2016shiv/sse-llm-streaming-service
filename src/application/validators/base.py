@@ -37,23 +37,23 @@ class BaseValidator(ABC):
     # Common security patterns (shared across all validators)
     SECURITY_PATTERNS: list[tuple[Pattern, str]] = [
         (
-            re.compile(r'<script[^>]*>.*?</script>', re.IGNORECASE | re.DOTALL),
-            "XSS: Script tag detected"
+            re.compile(r"<script[^>]*>.*?</script>", re.IGNORECASE | re.DOTALL),
+            "XSS: Script tag detected",
         ),
-        (re.compile(r'javascript:', re.IGNORECASE), "XSS: JavaScript protocol detected"),
-        (re.compile(r'on\w+\s*=', re.IGNORECASE), "XSS: Event handler detected"),
-        (re.compile(r'<\w+[^>]*on\w+\s*=', re.IGNORECASE), "XSS: Inline event handler detected"),
-        (re.compile(r';\s*drop\s+table', re.IGNORECASE), "SQL Injection: DROP TABLE detected"),
-        (re.compile(r';\s*delete\s+from', re.IGNORECASE), "SQL Injection: DELETE FROM detected"),
+        (re.compile(r"javascript:", re.IGNORECASE), "XSS: JavaScript protocol detected"),
+        (re.compile(r"on\w+\s*=", re.IGNORECASE), "XSS: Event handler detected"),
+        (re.compile(r"<\w+[^>]*on\w+\s*=", re.IGNORECASE), "XSS: Inline event handler detected"),
+        (re.compile(r";\s*drop\s+table", re.IGNORECASE), "SQL Injection: DROP TABLE detected"),
+        (re.compile(r";\s*delete\s+from", re.IGNORECASE), "SQL Injection: DELETE FROM detected"),
         (
-            re.compile(r';\s*update\s+\w+\s+set', re.IGNORECASE),
-            "SQL Injection: UPDATE SET detected"
+            re.compile(r";\s*update\s+\w+\s+set", re.IGNORECASE),
+            "SQL Injection: UPDATE SET detected",
         ),
-        (re.compile(r'union\s+select', re.IGNORECASE), "SQL Injection: UNION SELECT detected"),
-        (re.compile(r'\.\./'), "Path Traversal: ../ detected"),
-        (re.compile(r'etc/passwd'), "Path Traversal: /etc/passwd detected"),
-        (re.compile(r'etc/shadow'), "Path Traversal: /etc/shadow detected"),
-        (re.compile(r'\.\.\\\\'), "Path Traversal: ..\\ detected"),
+        (re.compile(r"union\s+select", re.IGNORECASE), "SQL Injection: UNION SELECT detected"),
+        (re.compile(r"\.\./"), "Path Traversal: ../ detected"),
+        (re.compile(r"etc/passwd"), "Path Traversal: /etc/passwd detected"),
+        (re.compile(r"etc/shadow"), "Path Traversal: /etc/shadow detected"),
+        (re.compile(r"\.\.\\\\"), "Path Traversal: ..\\ detected"),
     ]
 
     def __init__(self, strict: bool = True):
@@ -78,7 +78,7 @@ class BaseValidator(ABC):
         value: str,
         field_name: str,
         min_length: int | None = None,
-        max_length: int | None = None
+        max_length: int | None = None,
     ) -> None:
         """
         Validate string length is within bounds.
@@ -101,14 +101,14 @@ class BaseValidator(ABC):
             raise ValidationError(
                 f"{field_name} too short (minimum {min_length} characters)",
                 field=field_name,
-                value=f"length={length}"
+                value=f"length={length}",
             )
 
         if max_length is not None and length > max_length:
             raise ValidationError(
                 f"{field_name} too long (maximum {max_length} characters)",
                 field=field_name,
-                value=f"length={length}"
+                value=f"length={length}",
             )
 
     def validate_not_empty(self, value: str, field_name: str) -> None:
@@ -123,17 +123,10 @@ class BaseValidator(ABC):
             ValidationError: If value is empty or whitespace
         """
         if not value or not value.strip():
-            raise ValidationError(
-                f"{field_name} cannot be empty",
-                field=field_name
-            )
+            raise ValidationError(f"{field_name} cannot be empty", field=field_name)
 
     def validate_pattern(
-        self,
-        value: str,
-        pattern: str | Pattern,
-        field_name: str,
-        error_message: str | None = None
+        self, value: str, pattern: str | Pattern, field_name: str, error_message: str | None = None
     ) -> None:
         """
         Validate string matches a regex pattern.
@@ -155,11 +148,7 @@ class BaseValidator(ABC):
             raise ValidationError(message, field=field_name)
 
     def validate_whitelist(
-        self,
-        value: str,
-        allowed_values: set[str],
-        field_name: str,
-        case_sensitive: bool = True
+        self, value: str, allowed_values: set[str], field_name: str, case_sensitive: bool = True
     ) -> None:
         """
         Validate value is in allowed set (whitelist).
@@ -187,7 +176,7 @@ class BaseValidator(ABC):
             raise ValidationError(
                 f"Invalid {field_name}: '{value}' not in allowed values",
                 field=field_name,
-                value=value
+                value=value,
             )
 
     def check_security_patterns(self, value: str, field_name: str) -> None:
@@ -216,11 +205,10 @@ class BaseValidator(ABC):
                 logger.warning(
                     f"Security pattern detected in {field_name}",
                     pattern=description,
-                    field=field_name
+                    field=field_name,
                 )
                 raise SecurityValidationError(
-                    f"Potentially malicious content detected: {description}",
-                    field=field_name
+                    f"Potentially malicious content detected: {description}", field=field_name
                 )
 
     @abstractmethod

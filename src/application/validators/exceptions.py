@@ -73,29 +73,35 @@ class ValidationError(Exception):
 
 class QueryValidationError(ValidationError):
     """Query content validation failed."""
+
     pass
 
 
 class ModelValidationError(ValidationError):
     """Model identifier validation failed."""
+
     pass
 
 
 class ProviderValidationError(ValidationError):
     """Provider identifier validation failed."""
+
     pass
 
 
 class RateLimitValidationError(ValidationError):
     """Rate limit validation failed."""
+
     pass
 
 
 class SecurityValidationError(ValidationError):
     """Security validation failed (malicious content detected)."""
+
     pass
 
 
 class ConfigValidationError(ValidationError):
     """Configuration validation failed."""
+
     pass

@@ -96,9 +96,7 @@ class ConfigValidator(BaseValidator):
         if key not in self.ALLOWED_CONFIG:
             allowed_keys = ", ".join(self.ALLOWED_CONFIG.keys())
             raise ConfigValidationError(
-                f"Configuration key '{key}' is not allowed. "
-                f"Allowed keys: {allowed_keys}",
-                field=key
+                f"Configuration key '{key}' is not allowed. Allowed keys: {allowed_keys}", field=key
             )
 
         config_spec = self.ALLOWED_CONFIG[key]
@@ -110,7 +108,7 @@ class ConfigValidator(BaseValidator):
                 f"Configuration '{key}' must be of type {expected_type.__name__}, "
                 f"got {type(value).__name__}",
                 field=key,
-                value=value
+                value=value,
             )
 
         # Validate constraints
@@ -118,15 +116,10 @@ class ConfigValidator(BaseValidator):
             if value not in config_spec["allowed_values"]:
                 allowed = ", ".join(map(str, config_spec["allowed_values"]))
                 raise ConfigValidationError(
-                    f"Configuration '{key}' must be one of: {allowed}",
-                    field=key,
-                    value=value
+                    f"Configuration '{key}' must be one of: {allowed}", field=key, value=value
                 )
 
         if "pattern" in config_spec and isinstance(value, str):
             self.validate_pattern(
-                value,
-                config_spec["pattern"],
-                key,
-                f"Configuration '{key}' format is invalid"
+                value, config_spec["pattern"], key, f"Configuration '{key}' format is invalid"
             )

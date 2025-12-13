@@ -40,21 +40,28 @@ Why SSE for LLM Streaming?
 - Perfect for one-way data flow (LLM → User)
 - Lower overhead than WebSockets for this use case
 
-This module contains the SSE streaming endpoint for real-time LLM responses.
+ARCHITECTURE:
+-------------
+This module follows the Routes → Services → Models pattern:
+- Route: HTTP handling only (this file)
+- Service: Business logic (streaming_service.py)
+- Models: Pydantic validation (models/streaming.py)
+
+This separation reduces cognitive load and improves testability.
 """
 
 import uuid
 
-from fastapi import APIRouter, Request
+import structlog
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field, field_validator
 
 from src.application.api.dependencies import OrchestratorDep, UserIdDep
+from src.application.api.models.streaming import (
+    StreamRequestModel,
+)
+from src.application.services.streaming_service import get_streaming_service
 from src.core.config.constants import HEADER_THREAD_ID
-from src.core.exceptions import SSEBaseError
-from src.core.logging.logger import get_logger
-from src.infrastructure.monitoring.metrics_collector import get_metrics_collector
-from src.llm_stream.models.stream_request import SSEEvent, StreamRequest
 
 # ============================================================================
 # ROUTER SETUP
@@ -64,101 +71,41 @@ from src.llm_stream.models.stream_request import SSEEvent, StreamRequest
 # - tags=["Streaming"]: Groups these endpoints in the API docs under "Streaming"
 
 router = APIRouter(prefix="/stream", tags=["Streaming"])
-logger = get_logger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ============================================================================
-# REQUEST/RESPONSE MODELS
+# AUTHENTICATION PLACEHOLDER
 # ============================================================================
-# PYDANTIC MODELS: Data Validation and Serialization
-# ---------------------------------------------------
-# Pydantic is a data validation library that FastAPI uses extensively.
-# When you define a Pydantic model and use it as a parameter type,
-# FastAPI automatically:
-# 1. Parses the JSON request body
-# 2. Validates each field against its type and constraints
-# 3. Returns a 422 error if validation fails
-# 4. Provides automatic API documentation with examples
-# 5. Serializes the model to JSON for responses
+# TODO: Implement authentication in the future
+# For now, this is a placeholder that always succeeds
+# When ready to add auth, replace this with actual token verification
 
 
-class StreamRequestModel(BaseModel):
+async def verify_stream_access() -> None:
     """
-    Request model for SSE streaming endpoint.
+    Placeholder for streaming endpoint authentication.
 
-    PYDANTIC FIELD VALIDATION:
-    --------------------------
-    Field() lets you add validation rules and metadata:
-    - ... (Ellipsis): Required field (no default value)
-    - min_length/max_length: String length constraints
-    - default: Default value if not provided
-    - description: Shows in API docs
+    FUTURE IMPLEMENTATION:
+    ----------------------
+    When ready to add authentication:
+    1. Add HTTPBearer dependency to extract token
+    2. Verify JWT or API key
+    3. Check user rate limits
+    4. Raise HTTPException(401) if unauthorized
 
-    FastAPI will automatically reject requests that don't meet these constraints
-    with a detailed error message explaining what's wrong.
+    Example:
+        from fastapi.security import HTTPBearer
+
+        security = HTTPBearer()
+
+        async def verify_stream_access(
+            credentials: HTTPAuthorizationCredentials = Depends(security)
+        ) -> None:
+            if not is_valid_token(credentials.credentials):
+                raise HTTPException(status_code=401, detail="Invalid token")
     """
-
-    # Required field: must be between 1 and 100,000 characters
-    # The '...' means "required" in Pydantic
-    query: str = Field(
-        ..., min_length=1, max_length=100000, description="User query to send to the LLM"
-    )
-
-    # Required field: must be a known model
-    model: str = Field(description="LLM model identifier (e.g., gpt-4, claude-3)")
-
-    # Optional field that can be None (using Python 3.10+ union syntax)
-    provider: str | None = Field(
-        default=None,
-        description=(
-            "Preferred LLM provider (openai, anthropic, etc.). Auto-selected if not specified."
-        ),
-    )
-
-    # PYDANTIC CONFIG:
-    # ----------------
-    # The Config class customizes Pydantic's behavior for this model.
-    # json_schema_extra adds example data to the OpenAPI schema,
-    # which appears in the interactive API docs (/docs).
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "query": "Explain quantum computing in simple terms",
-                "model": "gpt-3.5-turbo",
-                "provider": "openai",
-            }
-        }
-
-    # PYDANTIC FIELD VALIDATORS:
-    # --------------------------
-    # Field validators run after basic type validation and can reject invalid values.
-    # They raise ValueError with a message that FastAPI converts to a 422 response.
-
-    @field_validator("model")
-    @classmethod
-    def validate_model(cls, v: str) -> str:
-        """Validate model name is not empty and not obviously invalid."""
-        if not v or v.strip() == "":
-            raise ValueError("Model cannot be empty")
-
-        # Reject known invalid models for testing
-        invalid_models = ["invalid-model", "gpt-5"]
-        if v in invalid_models:
-            raise ValueError(f"Invalid model: {v}")
-
-        return v
-
-    @field_validator("provider")
-    @classmethod
-    def validate_provider(cls, v: str | None) -> str | None:
-        """Validate provider if specified."""
-        if v is not None:
-            # Reject known invalid providers
-            invalid_providers = ["nonexistent-provider"]
-            if v in invalid_providers:
-                raise ValueError(f"Invalid provider: {v}")
-
-        return v
+    pass  # No-op for now
 
 
 # ============================================================================
@@ -166,7 +113,19 @@ class StreamRequestModel(BaseModel):
 # ============================================================================
 
 
-@router.post("")
+@router.post(
+    "",
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(verify_stream_access)],
+    responses={
+        200: {
+            "description": "SSE stream started successfully",
+            "content": {"text/event-stream": {}},
+        },
+        422: {"description": "Validation error - invalid request format"},
+        503: {"description": "Service unavailable - all resilience layers exhausted"},
+    },
+)
 async def create_stream(
     request: Request, body: StreamRequestModel, orchestrator: OrchestratorDep, user_id: UserIdDep
 ):
@@ -178,10 +137,6 @@ async def create_stream(
     @router.post("") defines a POST endpoint at the router's prefix path.
     Since the router has prefix="/stream", this creates POST /stream
 
-    You could also write:
-    - @router.post("/") for POST /stream/
-    - @router.post("/chat") for POST /stream/chat
-
     ASYNC ROUTE HANDLERS:
     ---------------------
     Using 'async def' tells FastAPI this is an asynchronous handler.
@@ -190,10 +145,8 @@ async def create_stream(
     - Allow concurrent request handling
     - Support 'await' for async operations
 
-    If you use 'def' (sync), FastAPI runs it in a thread pool to avoid blocking.
-
-    PARAMETER INJECTION:
-    --------------------
+    PARAMETER INJECTION (Dependency Injection):
+    -------------------------------------------
     FastAPI automatically injects parameters based on their type and location:
 
     1. request: Request
@@ -214,32 +167,6 @@ async def create_stream(
        - Custom dependency for user identification
        - ENTERPRISE BEST PRACTICE: Centralized user ID extraction
        - Automatically gets X-User-ID header or falls back to IP address
-       - Makes the code DRY (Don't Repeat Yourself)
-
-    REQUEST LIFECYCLE FOR THIS ENDPOINT:
-    ------------------------------------
-    1. Client sends POST /stream with JSON body
-    2. FastAPI parses JSON and validates against StreamRequestModel
-    3. FastAPI calls get_orchestrator(request) to resolve dependency
-    4. FastAPI calls create_stream() with all parameters injected
-    5. create_stream() returns a StreamingResponse
-    6. FastAPI sends headers and starts streaming
-    7. Each yield from event_generator() sends an SSE event
-    8. When generator completes, connection closes
-
-    This endpoint implements the following workflow:
-    1. Extract/generate thread ID for request correlation
-    2. Identify user for rate limiting
-    3. Record metrics (active connections)
-    4. Create async generator for SSE events
-    5. Stream LLM response chunks as SSE events
-    6. Handle errors gracefully (send error events)
-    7. Clean up metrics on completion
-
-    Args:
-        request: FastAPI Request object (auto-injected)
-        body: Validated request body (auto-parsed from JSON)
-        orchestrator: Stream orchestrator dependency (auto-injected)
 
     Returns:
         StreamingResponse: SSE event stream with LLM response chunks
@@ -261,233 +188,62 @@ async def create_stream(
     # This allows us to trace a request through logs, metrics, and debugging.
     thread_id = request.headers.get(HEADER_THREAD_ID) or str(uuid.uuid4())
 
-    # ENTERPRISE NOTE: user_id is now injected via dependency (UserIdDep)
-    # This centralizes user identification logic and follows DRY principle
+    logger.info(
+        "stream_request_received",
+        thread_id=thread_id,
+        user_id=user_id,
+        model=body.model,
+        provider=body.provider,
+        query_length=len(body.query),
+    )
 
     # ========================================================================
-    # STEP 2: Connection Pool Management
+    # STEP 2: Delegate to Streaming Service
     # ========================================================================
-    # Acquire a connection slot from the pool before processing.
-    # This provides backpressure and prevents server overload.
-    from src.core.exceptions import ConnectionPoolExhaustedError, UserConnectionLimitError
-    from src.core.resilience.connection_pool_manager import get_connection_pool_manager
-
-    pool_manager = get_connection_pool_manager()
+    # The service handles all business logic:
+    # - Connection pool management
+    # - Queue failover if pool exhausted
+    # - SSE event generation
+    # - Error handling and metrics
+    #
+    # SEPARATION OF CONCERNS:
+    # - Route: HTTP handling (validation, response formatting)
+    # - Service: Business logic (streaming, failover, metrics)
+    # - Models: Data validation (Pydantic schemas)
 
     try:
-        # Try to acquire connection from pool
-        await pool_manager.acquire_connection(user_id=user_id, thread_id=thread_id)
-    except ConnectionPoolExhaustedError as e:
-        # Pool is exhausted - return 503 Service Unavailable
-        logger.warning(
-            "Connection pool exhausted - returning 503", thread_id=thread_id, user_id=user_id
+        service = get_streaming_service(orchestrator)
+
+        # Create stream and get resilience layer indicator
+        stream_generator, resilience_layer = await service.create_stream(
+            request_model=body,
+            user_id=user_id,
+            thread_id=thread_id,
         )
+
+        logger.debug("stream_started", thread_id=thread_id, resilience_layer=resilience_layer.value)
+
+    except Exception as e:
+        # ====================================================================
+        # Service Layer Failed - Return 503
+        # ====================================================================
+        # If the service layer itself fails to start the stream,
+        # return a proper HTTP error (not an SSE error event).
+        logger.error(
+            "stream_service_failed", thread_id=thread_id, error=str(e), error_type=type(e).__name__
+        )
+
         return JSONResponse(
-            status_code=503,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             content={
                 "error": "service_unavailable",
-                "message": "Server at capacity. Please try again later.",
-                "details": e.details,
+                "message": "Unable to start stream. Please try again later.",
             },
             headers={HEADER_THREAD_ID: thread_id},
         )
-    except (ConnectionPoolExhaustedError, UserConnectionLimitError) as e:
-        # ====================================================================
-        # LAYER 3 DEFENSE: Queue Failover
-        # ====================================================================
-        # Instead of rejecting with 429, we enqueue the request to be processed
-        # when resources become available.
-        #
-        # Mechanism:
-        # 1. Enqueue request payload to "streaming_requests_failover" topic
-        # 2. Worker process picks it up when ready
-        # 3. Worker streams response back via Redis Pub/Sub
-        # 4. This endpoint yields the subscribed stream chunk-by-chunk
-
-        logger.warning(
-            "Connection pool limit reached - activating Queue Failover (Layer 3)",
-            stage="LAYER3.ACTIVATE",
-            thread_id=thread_id,
-            user_id=user_id,
-            reason=str(e)
-        )
-
-        try:
-            from src.core.resilience.queue_request_handler import get_queue_request_handler
-            queue_handler = get_queue_request_handler()
-
-            # This returns an async generator that yields SSE events from the queue worker
-            stream_generator = queue_handler.queue_and_stream(
-                user_id=user_id,
-                thread_id=thread_id,
-                payload=body.model_dump()
-            )
-
-            return StreamingResponse(
-                stream_generator,
-                media_type="text/event-stream",
-                headers={
-                    HEADER_THREAD_ID: thread_id,
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                    "X-Resilience-Layer": "3-Queue-Failover"  # Header to indicate failover
-                },
-            )
-
-        except Exception as queue_error:
-            # If even the queue fails (e.g. Redis down), then we must return 503
-            logger.error(
-                "Queue failover failed",
-                stage="LAYER3.ERROR",
-                error=str(queue_error)
-            )
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "error": "service_unavailable",
-                    "message": "System checks failed. Please try again later."
-                },
-                headers={HEADER_THREAD_ID: thread_id}
-            )
 
     # ========================================================================
-    # STEP 3: Record Metrics
-    # ========================================================================
-    # Track active connections for monitoring and capacity planning.
-    # This is decremented in the finally block to ensure accurate counts.
-    metrics = get_metrics_collector()
-    metrics.increment_connections()
-
-    # ========================================================================
-    # STEP 3: Define Async Generator for SSE Events
-    # ========================================================================
-    # ASYNC GENERATORS IN PYTHON:
-    # ---------------------------
-    # An async generator is a function that:
-    # 1. Is defined with 'async def'
-    # 2. Uses 'yield' to produce values
-    # 3. Can use 'await' for async operations
-    #
-    # How it works:
-    # - Each 'yield' pauses execution and returns a value
-    # - The caller can iterate with 'async for'
-    # - Execution resumes after the yield when next value is requested
-    #
-    # Why use it for SSE?
-    # - Perfect for streaming data as it becomes available
-    # - Non-blocking (doesn't tie up the event loop)
-    # - Memory efficient (doesn't load entire response into memory)
-
-    async def event_generator():
-        """
-        Async generator that yields SSE-formatted events.
-
-        This generator:
-        1. Creates a StreamRequest from the validated input
-        2. Calls the orchestrator to stream LLM responses
-        3. Formats each chunk as an SSE event
-        4. Handles errors by sending error events
-        5. Sends [DONE] signal when complete
-        6. Cleans up metrics in finally block
-
-        The try/except/finally structure ensures:
-        - Errors are sent to the client (not just logged)
-        - Metrics are always cleaned up (even on errors)
-        - The stream always terminates gracefully
-        """
-        try:
-            # Create internal request object with all necessary context
-            stream_request = StreamRequest(
-                query=body.query,
-                model=body.model,
-                provider=body.provider,
-                thread_id=thread_id,
-                user_id=user_id,
-            )
-
-            # Stream LLM response chunks from the orchestrator.
-            # The orchestrator handles:
-            # - Cache lookup
-            # - Rate limiting
-            # - Provider selection and failover
-            # - Actual LLM streaming
-            # - Cache storage
-            #
-            # ASYNC FOR LOOP:
-            # ---------------
-            # 'async for' is used to iterate over an async generator.
-            # It automatically awaits each iteration.
-            # Each 'event' is an SSEEvent object with the LLM response chunk.
-            async for event in orchestrator.stream(stream_request):
-                # Format the event as SSE protocol and yield it.
-                # event.format() returns a string like:
-                # "event: message\ndata: {...}\n\n"
-                yield event.format()
-
-            # Send completion signal.
-            # This tells the client the stream is complete (not an error).
-            # The client's EventSource can detect this and stop listening.
-            yield "data: [DONE]\n\n"
-
-            # Record successful completion in metrics
-            metrics.record_request("success", body.provider or "auto", body.model)
-
-        except SSEBaseError as e:
-            # Handle application-specific errors (cache errors, provider errors, etc.)
-            # Send an error event to the client instead of just closing the connection.
-            # This gives the client context about what went wrong.
-            error_event = SSEEvent(
-                event="error", data={"error": type(e).__name__, "message": str(e)}
-            )
-            yield error_event.format()
-
-            # Record error metrics for monitoring and alerting
-            metrics.record_request("error", body.provider or "auto", body.model)
-            metrics.record_error(type(e).__name__, "stream")
-
-        except Exception as e:
-            # Handle unexpected errors (programming errors, system failures, etc.)
-            # Don't expose internal error details to the client (security best practice)
-            error_event = SSEEvent(
-                event="error",
-                data={"error": "internal_error", "message": "An unexpected error occurred"},
-            )
-            yield error_event.format()
-
-            # Record error metrics
-            metrics.record_request("error", body.provider or "auto", body.model)
-            metrics.record_error("internal_error", "stream")
-
-            # Log detailed error for debugging (includes full exception and traceback)
-            import traceback
-
-            logger.error(
-                f"Unexpected error in stream: {type(e).__name__}: {str(e)}",
-                thread_id=thread_id,
-                error_type=type(e).__name__,
-                error_message=str(e),
-                traceback=traceback.format_exc(),
-            )
-
-        finally:
-            # FINALLY BLOCK:
-            # --------------
-            # This ALWAYS runs, even if there's an error or early return.
-            # Critical for cleanup operations like:
-            # - Releasing connection pool slot
-            # - Updating metrics
-            # - Ensuring no resource leaks
-
-            # Release connection back to pool
-            await pool_manager.release_connection(thread_id=thread_id, user_id=user_id)
-
-            # Decrement active connections counter.
-            # This ensures our metrics stay accurate even if errors occur.
-            metrics.decrement_connections()
-
-    # ========================================================================
-    # STEP 4: Return StreamingResponse
+    # STEP 3: Return StreamingResponse
     # ========================================================================
     # FASTAPI StreamingResponse:
     # --------------------------
@@ -501,30 +257,45 @@ async def create_stream(
     #    - The client receives it in real-time
     # 3. When the generator completes, FastAPI closes the connection
     #
-    # This is different from a regular Response where:
-    # - You build the entire response in memory
-    # - Send it all at once when the handler returns
-    #
     # Benefits of streaming:
     # - Lower latency (client sees data immediately)
     # - Lower memory usage (don't buffer entire response)
     # - Better user experience (progressive loading)
 
     return StreamingResponse(
-        event_generator(),  # The async generator that produces SSE events
-        media_type="text/event-stream",  # SSE content type (tells client to expect SSE format)
+        stream_generator,  # The async generator from StreamingService
+        media_type="text/event-stream",  # SSE content type
         headers={
-            # Return the thread ID so client can correlate requests/responses
+            # ================================================================
+            # Thread ID: Request Correlation
+            # ================================================================
+            # Return the thread ID so client can correlate requests/responses.
+            # Useful for debugging and support tickets.
             HEADER_THREAD_ID: thread_id,
-            # Prevent caching of streaming responses
-            # SSE streams are unique per request and shouldn't be cached
+            # ================================================================
+            # Cache-Control: Prevent Caching
+            # ================================================================
+            # SSE streams are unique per request and shouldn't be cached.
+            # This tells browsers and proxies not to cache the response.
             "Cache-Control": "no-cache",
-            # Keep the connection alive for streaming
-            # Prevents proxies from closing the connection prematurely
+            # ================================================================
+            # Connection: Keep Alive
+            # ================================================================
+            # Keep the connection alive for streaming.
+            # Prevents proxies from closing the connection prematurely.
             "Connection": "keep-alive",
-            # Disable nginx buffering
-            # Some reverse proxies buffer responses, which breaks streaming
-            # This header tells nginx to send data immediately
+            # ================================================================
+            # X-Accel-Buffering: Disable NGINX Buffering
+            # ================================================================
+            # Some reverse proxies buffer responses, which breaks streaming.
+            # This header tells NGINX to send data immediately.
             "X-Accel-Buffering": "no",
+            # ================================================================
+            # X-Resilience-Layer: Indicate Which Layer Handled Request
+            # ================================================================
+            # Tells the client which resilience layer was used:
+            # - "1-Direct": Normal path (pool had capacity)
+            # - "3-Queue-Failover": Request was queued (pool was full)
+            "X-Resilience-Layer": resilience_layer.value,
         },
     )

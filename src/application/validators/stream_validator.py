@@ -55,11 +55,7 @@ class QueryValidator(BaseValidator):
         self.settings = get_settings()
 
         # Allow configuration override
-        self.max_length = getattr(
-            self.settings,
-            'QUERY_MAX_LENGTH',
-            self.DEFAULT_MAX_LENGTH
-        )
+        self.max_length = getattr(self.settings, "QUERY_MAX_LENGTH", self.DEFAULT_MAX_LENGTH)
 
     def validate(self, query: str) -> None:
         """
@@ -83,10 +79,7 @@ class QueryValidator(BaseValidator):
 
             # Step 2: Length limits
             self.validate_length(
-                query,
-                "query",
-                min_length=self.DEFAULT_MIN_LENGTH,
-                max_length=self.max_length
+                query, "query", min_length=self.DEFAULT_MIN_LENGTH, max_length=self.max_length
             )
 
             # Step 3: Security checks
@@ -160,12 +153,7 @@ class ModelValidator(BaseValidator):
     }
 
     # Combined whitelist
-    VALID_MODELS = (
-        OPENAI_MODELS |
-        ANTHROPIC_MODELS |
-        GOOGLE_MODELS |
-        DEEPSEEK_MODELS
-    )
+    VALID_MODELS = OPENAI_MODELS | ANTHROPIC_MODELS | GOOGLE_MODELS | DEEPSEEK_MODELS
 
     def validate(self, model: str, provider: str | None = None) -> None:
         """
@@ -189,12 +177,7 @@ class ModelValidator(BaseValidator):
             self.validate_not_empty(model, "model")
 
             # Step 2: Whitelist validation
-            self.validate_whitelist(
-                model,
-                self.VALID_MODELS,
-                "model",
-                case_sensitive=True
-            )
+            self.validate_whitelist(model, self.VALID_MODELS, "model", case_sensitive=True)
 
             # Step 3: Provider-specific validation (if provider specified)
             if provider:
@@ -231,7 +214,7 @@ class ModelValidator(BaseValidator):
                 raise ModelValidationError(
                     f"Model '{model}' is not valid for provider '{provider}'",
                     field="model",
-                    value=model
+                    value=model,
                 )
 
 
@@ -275,10 +258,7 @@ class ProviderValidator(BaseValidator):
 
             # Whitelist validation (case-insensitive)
             self.validate_whitelist(
-                provider,
-                self.VALID_PROVIDERS,
-                "provider",
-                case_sensitive=False
+                provider, self.VALID_PROVIDERS, "provider", case_sensitive=False
             )
 
             logger.debug("Provider validation passed", provider=provider)
@@ -320,12 +300,7 @@ class StreamRequestValidator:
         self.model_validator = ModelValidator(strict=strict)
         self.provider_validator = ProviderValidator(strict=strict)
 
-    def validate_request(
-        self,
-        query: str,
-        model: str,
-        provider: str | None = None
-    ) -> None:
+    def validate_request(self, query: str, model: str, provider: str | None = None) -> None:
         """
         Validate complete stream request.
 
@@ -357,7 +332,7 @@ class StreamRequestValidator:
             "Stream request validation passed",
             query_length=len(query),
             model=model,
-            provider=provider
+            provider=provider,
         )
 
     def validate_query(self, query: str) -> None:
@@ -404,11 +379,12 @@ class StreamRequestValidator:
         from src.core.config.settings import get_settings
 
         settings = get_settings()
-        max_connections = getattr(settings.app, 'MAX_CONNECTIONS', MAX_CONCURRENT_CONNECTIONS)
+        max_connections = getattr(settings.app, "MAX_CONNECTIONS", MAX_CONCURRENT_CONNECTIONS)
 
         if current_connections >= max_connections:
             from src.application.validators.exceptions import ValidationError
+
             raise ValidationError(
                 f"Connection limit exceeded: {current_connections}/{max_connections}",
-                field="connections"
+                field="connections",
             )

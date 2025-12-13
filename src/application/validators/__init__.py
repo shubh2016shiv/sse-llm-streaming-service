@@ -131,12 +131,11 @@ class RequestValidator(StreamRequestValidator):
         from src.core.config.settings import get_settings
 
         settings = get_settings()
-        max_connections = getattr(settings.app, 'MAX_CONNECTIONS', MAX_CONCURRENT_CONNECTIONS)
+        max_connections = getattr(settings.app, "MAX_CONNECTIONS", MAX_CONCURRENT_CONNECTIONS)
 
         if active_connections >= max_connections:
             raise RateLimitValidationError(
-                f"Connection limit reached ({max_connections})",
-                field="connections"
+                f"Connection limit reached ({max_connections})", field="connections"
             )
 
 
