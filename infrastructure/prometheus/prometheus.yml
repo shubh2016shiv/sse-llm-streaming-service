@@ -240,10 +240,10 @@ scrape_configs:
     
     # METRICS PATH
     # ------------
-    # Our application exposes metrics at /admin/metrics
-    # (Not the default /metrics path)
+    # Our application exposes metrics at /api/v1/admin/metrics
+    # Full path: /api/v1 (base) + /admin (router prefix) + /metrics (route)
     
-    metrics_path: '/admin/metrics'
+    metrics_path: '/api/v1/admin/metrics'
     
     # STATIC TARGETS
     # --------------
